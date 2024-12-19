@@ -93,10 +93,10 @@ router.delete('/revoke/:id(\\d+)', async ctx => {
         app.ws,
         JSON.stringify({
             event: 'revoke',
-                data: {
-                    id,
-                    room: ctx.query.room,
-                },
+            data: {
+                id,
+                room: ctx.query.room,
+            },
         }),
         ctx.query.room,
     );

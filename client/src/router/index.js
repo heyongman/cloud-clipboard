@@ -4,6 +4,7 @@ import Home from '@/views/Home.vue';
 import Cloud from '@/views/CloupCp.vue';
 import Device from '@/views/Device.vue';
 import About from '@/views/About.vue';
+import OCR from '@/views/OCR.vue';
 
 Vue.use(VueRouter);
 
@@ -33,6 +34,13 @@ const router = new VueRouter({
         {
             path: '/cloud-cp/about',
             component: About,
+            meta: {
+                keepAlive: true,
+            },
+        },
+        {
+            path: '/ocr',
+            component: OCR,
             meta: {
                 keepAlive: true,
             },

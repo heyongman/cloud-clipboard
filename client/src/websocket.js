@@ -110,7 +110,7 @@ export default {
             }
         },
     },
-    mounted() {
-        this.connect();
-    },
+    // mounted() {
+        // this.connect();
+    // },
 }

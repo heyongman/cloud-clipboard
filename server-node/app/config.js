@@ -19,7 +19,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             auth: false,
         },
         text: {
-            limit: 4096,
+            limit: 4096000,
         },
         file: {
             expire: 31536000,
