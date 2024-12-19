@@ -104,91 +104,85 @@ router.delete('/revoke/:id(\\d+)', async ctx => {
     saveHistory();
 });
 
-router.post(
-    '/upload',
-    koaBody({
-        enableTypes: ['text'],
-    }),
-    async ctx => {
-        /** @type {String} */
-        const filename = ctx.request.body;
-        const file = new UploadedFile(filename);
-        uploadFileMap.set(file.uuid, file);
-        writeJSON(ctx, 200, {
-            uuid: file.uuid,
-        });
-    }
-);
-
-router.post('/upload/chunk/:uuid([0-9a-f]{32})', async ctx => {
+const finish_file = async (ctx, file) => {
+    const message = {
+        event: 'receive',
+        data: {
+            id: messageQueue.counter,
+            type: 'file',
+            room: ctx.query.room,
+            name: file.name,
+            size: file.size,
+            cache: file.uuid,
+            expire: file.expireTime,
+        },
+    };
     try {
-        const file = uploadFileMap.get(ctx.params.uuid);
-        if (!file) {
-            throw new Error('无效的 UUID');
+        if (file.size > 33554432) throw new Error;
+        const img = sharp(file.path);
+        const {width, height} = await img.metadata();
+        if (Math.min(width, height) > 64) {
+            const ratio = 64 / Math.min(width, height);
+            img.resize(Math.round(width * ratio), Math.round(height * ratio), {
+                kernel: sharp.kernel.lanczos3,
+                withoutEnlargement: true,
+            });
         }
-        const data = await new Promise((resolve, reject) => {
-            let data = Buffer.alloc(0);
-            ctx.req.on('data', chunk => data = Buffer.concat([data, chunk]));
-            ctx.req.on('error', error => reject(error));
-            ctx.req.on('end', () => resolve(data));
-        });
-        await file.write(data);
-        writeJSON(ctx);
+        message.data.thumbnail = 'data:image/jpeg;base64,' + (await img.toFormat('jpg', {
+            quality: 70,
+            optimizeScans: true,
+        }).toBuffer()).toString('base64');
+    } catch {
+    }
+    messageQueue.enqueue(message);
+
+    /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
+    const app = ctx.app;
+    wsBoardcast(app.ws, JSON.stringify(message), ctx.query.room);
+    saveHistory();
+}
+
+
+// 一次性上传文件
+router.post('/upload/once', koaBody({
+    multipart: true,
+    formidable: {
+        maxFileSize: config.file.limit,    // 设置上传文件大小最大限制，默认2M
+        keepExtensions: true,    // 保持文件的后缀
+        uploadDir: storageFolder, // 设置文件上传目录
+        onFileBegin(name, file){
+            file.newFilename = file.originalFilename
+            file.filepath = path.join(storageFolder, file.originalFilename)
+        }
+    }
+}), async ctx => {
+    try {
+        let files = ctx.request.files.files; // 获取上传文件
+        if (!files) {
+            ctx.throw(400, 'No file uploaded');
+        }
+        if (!(files instanceof Array)){
+            files = [files]
+        }
+        for (let file of files) {
+            // const uuid = file.newFilename.slice(0,25)
+            const uuid = file.originalFilename
+            const uploadedFile = new UploadedFile(file.originalFilename, uuid);
+            uploadedFile.size = file.size
+            uploadFileMap.set(uploadedFile.uuid, uploadedFile);
+            await uploadedFile.finish();
+            await finish_file(ctx, uploadedFile)
+        }
+
+        // writeJSON(ctx);
+        writeJSON(ctx, 200, "File uploaded successfully");
     } catch (error) {
+        console.log(error)
         writeJSON(ctx, 400, error.message || error);
     }
 });
 
-router.post('/upload/finish/:uuid([0-9a-f]{32})', async ctx => {
-    try {
-        const file = uploadFileMap.get(ctx.params.uuid);
-        if (!file) {
-            throw new Error('无效的 UUID');
-        }
-        await file.finish();
-
-        const message = {
-            event: 'receive',
-            data: {
-                id: -1, // 在生成缩略图之后进队列之前再设定
-                type: 'file',
-                room: ctx.query.room,
-                name: file.name,
-                size: file.size,
-                cache: file.uuid,
-                expire: file.expireTime,
-            },
-        };
-        try {
-            if (file.size > 33554432) throw new Error;
-            const img = sharp(file.path);
-            const { width, height } = await img.metadata();
-            if (Math.min(width, height) > 64) {
-                const ratio = 64 / Math.min(width, height);
-                img.resize(Math.round(width * ratio), Math.round(height * ratio), {
-                    kernel: sharp.kernel.lanczos3,
-                    withoutEnlargement: true,
-                });
-            }
-            message.data.thumbnail = 'data:image/webp;base64,' + (await img.toFormat('webp', {
-                quality: 70,
-                smartSubsample: true,
-            }).toBuffer()).toString('base64');
-        } catch {}
-        message.data.id = messageQueue.counter;
-        messageQueue.enqueue(message);
-
-        /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-        const app = ctx.app;
-        wsBoardcast(app.ws, JSON.stringify(message), ctx.query.room);
-        writeJSON(ctx);
-        saveHistory();
-    } catch (error) {
-        writeJSON(ctx, 400, error.message || error);
-    }
-});
-
-router.get('/file/:uuid([0-9a-f]{32})', async ctx => {
+router.get('/file/:uuid', async ctx => {
     const file = uploadFileMap.get(ctx.params.uuid);
     if (!file || Date.now() / 1000 > file.expireTime || !fs.existsSync(file.path)) {
         return ctx.status = 404;
@@ -227,7 +221,7 @@ router.get('/file/:uuid([0-9a-f]{32})', async ctx => {
     }
 });
 
-router.delete('/file/:uuid([0-9a-f]{32})', async ctx => {
+router.delete('/file/:uuid', async ctx => {
     const file = uploadFileMap.get(ctx.params.uuid);
     if (!file) {
         return writeJSON(ctx, 404);
@@ -237,6 +231,12 @@ router.delete('/file/:uuid([0-9a-f]{32})', async ctx => {
     writeJSON(ctx);
     saveHistory();
 });
+
+
+router.get('/nav', async ctx => {
+    writeJSON(ctx, 200, config.nav);
+});
+
 
 if (fs.existsSync(historyPath)) {
     /**

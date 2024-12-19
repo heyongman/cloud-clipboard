@@ -10,10 +10,11 @@ const storageFolder = path.join(os.tmpdir(), '.cloud-clipboard-storage');
 class UploadedFile {
     /**
      * @param {String} name
+     * @param uuid
      */
-    constructor(name) {
+    constructor(name, uuid=crypto.randomBytes(16).toString('hex')) {
         this.name = name;
-        this.uuid = crypto.randomBytes(16).toString('hex');
+        this.uuid = uuid;
         this.path = path.join(storageFolder, this.uuid);
         this.size = 0;
         /** @type {Number} */

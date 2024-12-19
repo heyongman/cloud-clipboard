@@ -70,7 +70,7 @@
                 color="primary"
                 :block="$vuetify.breakpoint.smAndDown"
                 :disabled="!$root.send.files.length || !$root.websocket || progress"
-                @click="send"
+                @click="send_once"
             >发送</v-btn>
         </div>
     </div>
@@ -89,6 +89,7 @@ export default {
     data() {
         return {
             progress: false,
+            uploadedSize: 0,
             uploadedSizes: [],
             imagePreview: '',
             uploading: false,
@@ -99,9 +100,9 @@ export default {
         fileSize() {
             return this.$root.send.files.length ? this.$root.send.files.reduce((acc, cur) => acc += cur.size, 0) : 0;
         },
-        uploadedSize() {
-            return this.uploadedSizes.length ? this.uploadedSizes.reduce((acc, cur) => acc += cur, 0) : 0;
-        },
+        // uploadedSize() {
+        //     return this.uploadedSizes.length ? this.uploadedSizes.reduce((acc, cur) => acc += cur, 0) : 0;
+        // },
         uploadProgress() {
             return Math.min(this.fileSize !== 0 ? (this.uploadedSize / this.fileSize) : 0, 1);
         },
@@ -164,6 +165,39 @@ export default {
             } finally {
                 this.progress = false;
             }
+        },
+        async send_once() {
+          // 使用单次上传
+          try {
+            this.uploadedSizes.splice(0);
+            this.uploadedSizes.push(...Array(this.$root.send.files.length).fill(0));
+            // let uploadedSize = 0;
+            this.progress = true;
+
+            const formData = new FormData();
+            for (let file of this.$root.send.files) {
+              formData.append('files', file);
+            }
+            await this.$http.post('upload/once', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data'
+              },
+              onUploadProgress: e => this.uploadedSize += e.loaded,
+              params: new URLSearchParams([['room', this.$root.room]]),
+            });
+            // uploadedSize += file.size;
+
+            this.$toast('发送成功');
+            this.$root.send.files.splice(0);
+          } catch (error) {
+            if (error.response && error.response.data.msg) {
+              this.$toast(`发送失败：${error.response.data.msg}`);
+            } else {
+              this.$toast('发送失败');
+            }
+          } finally {
+            this.progress = false;
+          }
         }
     },
     mounted() {

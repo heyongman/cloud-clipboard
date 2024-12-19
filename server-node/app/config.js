@@ -22,10 +22,16 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             limit: 4096,
         },
         file: {
-            expire: 3600,
-            chunk: 2097152,
-            limit: 268435456,
+            expire: 31536000,
+            chunk: 2000097152,
+            limit: 10737418240,
         },
+        nav: [
+            {icon: '/favicon.ico', label: '云剪贴板', link: '/cloud-cp'},
+            {icon: '/favicon.ico', label: 'GPT', link: '/gpt'},
+            {icon: '/favicon.ico', label: '家庭助理', link: '/ha'},
+            {icon: '/favicon.ico', label: '识图', link: '/ocr'},
+        ]
     }, null, 4));
 }
 
@@ -50,6 +56,9 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      chunk: Number,
  *      limit: Number,
  *  },
+ *  nav: [
+ *      { icon:[String], link: [String], label:[String] },
+ *  ]
  * }}
  */
 const config = JSON.parse(fs.readFileSync(process.argv[2] || defaultConfigPath));
