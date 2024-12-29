@@ -12,7 +12,6 @@
                 :src="site.icon"
                 max-width="40"
                 max-height="40"
-                style="border-radius: 0"
             ></v-img>
         </v-card>
         <div class="mt-2">{{ site.label }}</div>
@@ -23,7 +22,7 @@
 
 <script>
 export default {
-  name: "Home",
+  name: "HeHome",
   data() {
     return {
       sites: [],
@@ -34,8 +33,10 @@ export default {
   },
   methods: {
     navigateTo(link) {
-      // window.location.href = link;
-      const routePath = this.$router.resolve({path: link}).href
+      let routePath = link
+      if (link.startsWith('/')) {
+        routePath = this.$router.resolve({path: link}).href
+      }
       window.open(routePath, '_blank')
 
     },
@@ -71,6 +72,6 @@ export default {
 }
 .icon-card:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 </style>

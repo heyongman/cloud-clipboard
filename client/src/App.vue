@@ -1,14 +1,8 @@
 <template>
-  <div id="app">
+  <v-app id="app">
     <router-view></router-view>
-  </div>
+  </v-app>
 </template>
-
-<style scoped>
-.v-navigation-drawer >>> .v-navigation-drawer__border {
-    pointer-events: none;
-}
-</style>
 
 <script>
 export default {

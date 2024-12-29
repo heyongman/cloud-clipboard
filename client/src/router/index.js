@@ -1,10 +1,10 @@
 import Vue from 'vue';
 import VueRouter from 'vue-router';
-import Home from '@/views/Home.vue';
-import Cloud from '@/views/CloupCp.vue';
+import Home from '@/views/HeHome.vue';
 import Device from '@/views/Device.vue';
 import About from '@/views/About.vue';
-import OCR from '@/views/OCR.vue';
+import OCR from '@/views/OcrConverter.vue';
+import CloudApp from "@/views/CloudApp.vue";
 
 Vue.use(VueRouter);
 
@@ -19,7 +19,7 @@ const router = new VueRouter({
         },
         {
             path: '/cloud-cp',
-            component: Cloud,
+            component: CloudApp,
             meta: {
                 keepAlive: true,
             },

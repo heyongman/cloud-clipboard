@@ -9,11 +9,8 @@ import koaCompress from 'koa-compress';
 import koaMount from 'koa-mount';
 import koaStatic from 'koa-static';
 import koaWebsocket from 'koa-websocket';
-// import proxy from 'koa-proxies'
-// import createProxyMiddleware from 'http-proxy-middleware'
-// import k2c from 'koa2-connect'
-import {createProxyMiddleware}  from 'http-proxy-middleware';
-import c2k from 'koa-connect';
+import proxy from 'koa-proxies';
+
 
 import config from './app/config.js';
 import httpRouter from './app/http-router.js';
@@ -28,29 +25,15 @@ if (!fs.existsSync(storagePath)) {
 process.env.VERSION = `node-${JSON.parse(fs.readFileSync(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'package.json'))).version}`;
 
 const app = koaWebsocket(new Koa);
-// app.use(proxy('/ha', {
-//     target: 'http://192.168.2.13:8123',
-//     rewrite: path => path.replace(/^\/ha/, ''),
-//     changeOrigin: true,
-//     logs: true
-// }))
-const proxyOptions = {
+
+app.use(proxy('/ha', {
     target: 'http://192.168.2.13:8123',
     changeOrigin: true,
-    ws: true,  // 启用websocket支持
-    pathRewrite: {
-        '^/ha': ''  // 重写路径，移除/ha前缀
-    },
-    onError: (err, req, res) => {
-        console.error('代理错误:', err);
-    }
-};
+    // 如果想去掉 /ha 前缀，添加以下配置
+    rewrite: path => path.replace(/^\/ha/, ''),
+    logs: true // 开启日志，方便调试
+}));
 
-// 创建代理中间件
-const proxyMiddleware = createProxyMiddleware(proxyOptions);
-
-// 将proxy middleware转换为koa中间件并使用
-// app.use(c2k(proxyMiddleware));
 app.use(async (ctx, next) => {
     const startTime = performance.now();
 
@@ -73,24 +56,6 @@ app.use(koaMount(config.server.prefix + '/', koaStatic(path.join(path.dirname(ur
 })));
 app.use(httpRouter.routes());
 app.use(httpRouter.allowedMethods());
-// app.use(proxy({
-//     host: 'http://192.168.2.13:8123',
-//     match: /^\/ha\//
-// }))
-// const opts = {
-//     target: 'http://192.168.2.13:8123',
-//     changeOrigin: true,
-//     pathRewrite: {
-//         '^/ha':''
-//     }
-// }
-// app.use(async (ctx, next) => {
-//     if (ctx.url.startsWith('/ha')){
-//         await k2c(createProxyMiddleware(opts))(ctx, next);
-//     } else {
-//         await next();
-//     }
-// })
 
 app.ws.use(wsRouter.routes());
 app.ws.use(wsRouter.allowedMethods());

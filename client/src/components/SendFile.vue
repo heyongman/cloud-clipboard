@@ -53,7 +53,7 @@
                     <div title="支持拖拽和 Ctrl+V 粘贴截图">
                         选择要发送的文件<span class="d-none d-xl-inline">（支持拖拽和 Ctrl+V 粘贴截图）</span>
                         <br>
-                        <small class="text--secondary">文件大小限制：{{$root.config.file.limit | prettyFileSize}}</small>
+                        <small class="text--secondary">支持拖拽和 Ctrl+V 粘贴截图，文件大小限制：{{$root.config.file.limit | prettyFileSize}}</small>
                     </div>
                 </v-btn>
                 <input
@@ -129,41 +129,6 @@ export default {
                     URL.revokeObjectURL(this.imagePreview);
                     this.imagePreview = URL.createObjectURL(files[0]);
                 }
-            }
-        },
-        async send() {
-            try {
-                const chunkSize = this.$root.config.file.chunk;
-                this.uploadedSizes.splice(0);
-                this.uploadedSizes.push(...Array(this.$root.send.files.length).fill(0));
-                await Promise.all(this.$root.send.files.map(async (file, i) => {
-                    let response = await this.$http.post('upload', file.name, {headers: {'Content-Type': 'text/plain'}});
-                    let uuid = response.data.result.uuid;
-
-                    let uploadedSize = 0;
-                    this.progress = true;
-                    while (uploadedSize < file.size) {
-                        let chunk = file.slice(uploadedSize, uploadedSize + chunkSize);
-                        await this.$http.post(`upload/chunk/${uuid}`, chunk, {
-                            headers: {'Content-Type': 'application/octet-stream'},
-                            onUploadProgress: e => this.$set(this.uploadedSizes, i, uploadedSize + e.loaded),
-                        });
-                        uploadedSize += chunkSize;
-                    }
-                    await this.$http.post(`upload/finish/${uuid}`, null, {
-                        params: new URLSearchParams([['room', this.$root.room]]),
-                    });
-                }));
-                this.$toast('发送成功');
-                this.$root.send.files.splice(0);
-            } catch (error) {
-                if (error.response && error.response.data.msg) {
-                    this.$toast(`发送失败：${error.response.data.msg}`);
-                } else {
-                    this.$toast('发送失败');
-                }
-            } finally {
-                this.progress = false;
             }
         },
         async send_once() {

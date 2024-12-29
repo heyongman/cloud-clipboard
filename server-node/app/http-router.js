@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import KoaRouter from '@koa/router';
 import { koaBody } from 'koa-body';
-import koaWebsocket from 'koa-websocket';
 import sharp from 'sharp';
+import axios from 'axios';
 
 import config from './config.js';
 import messageQueue from './message.js';
@@ -237,6 +237,33 @@ router.get('/nav', async ctx => {
     writeJSON(ctx, 200, config.nav);
 });
 
+router.all('/ocr/(.*)', async (ctx) => {
+    try {
+        // 构造目标 URL
+        const targetUrl = `https://aip.baidubce.com${ctx.path.replace('/ocr', '')}`;
+
+        // 转发请求
+        const response = await axios({
+            method: ctx.method, // 保持请求方法一致
+            url: targetUrl,
+            params: ctx.query, // 转发查询参数
+            data: ctx.request.body, // 转发请求体
+            headers: {
+                ...ctx.headers, // 转发请求头
+                host: 'aip.baidubce.com', // 修改 host 头
+            },
+        });
+
+        // 将响应返回给客户端
+        ctx.status = response.status;
+        ctx.body = response.data;
+        ctx.set(response.headers);
+    } catch (error) {
+        // 处理错误
+        ctx.status = error.response ? error.response.status : 500;
+        ctx.body = error.response ? error.response.data : 'Internal Server Error';
+    }
+});
 
 if (fs.existsSync(historyPath)) {
     /**
