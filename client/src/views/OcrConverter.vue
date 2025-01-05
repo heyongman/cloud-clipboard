@@ -69,23 +69,48 @@
                 outlined
             >
               <!-- 普通识别结果 -->
-              <template v-if="!item.hasPosition">
+              <template v-if="item.scene in ['accurate_basic', 'handwriting']">
                 <v-card-text class="text-content">
-                  {{ item.text }}
+                  {{ item.parsed }}
                 </v-card-text>
               </template>
 
               <!-- 带位置的识别结果 -->
-              <template v-else>
+              <template v-else-if="item.scene === 'accurate'">
                 <div
-                    v-for="(block, bIndex) in item.textBlocks"
-                    :key="bIndex"
+                    v-for="(item, index) in item.parsed"
+                    :key="index"
                     class="text-block-with-position"
-                    :style="getPositionStyle(block)"
+                    :style="getPositionStyle(item.location)"
                 >
-                  {{ block.text }}
+                  {{ item.text }}
                 </div>
               </template>
+
+              <!-- 表格识别结果 -->
+              <template v-else-if="item.scene === 'table'">
+                <v-card-text>
+                  <v-simple-table>
+                    <template v-slot:default>
+                      <thead>
+                      <tr>
+                        <th v-for="(header, index) in item.result.tables_result[0].header" :key="index">
+                          {{ header.words }}
+                        </th>
+                      </tr>
+                      </thead>
+                      <tbody>
+                      <tr v-for="(row, rowIndex) in item.parsed" :key="rowIndex">
+                        <td v-for="(cell, cellIndex) in row" :key="cellIndex">
+                          {{ cell.words }}
+                        </td>
+                      </tr>
+                      </tbody>
+                    </template>
+                  </v-simple-table>
+                </v-card-text>
+              </template>
+
             </v-sheet>
             <v-btn
                 color="primary"
@@ -136,7 +161,7 @@ export default {
       accessToken: '',
       loading: false,
       isDragging: false,
-      selectedScene: 'general',
+      selectedScene: 'accurate_basic',
       ocrResults: [],
       snackbar: {
         show: false,
@@ -144,7 +169,7 @@ export default {
         color: 'success'
       },
       scenes: [
-        {text: '通用文字识别', value: 'general'},
+        {text: '通用文字识别高精度', value: 'accurate_basic'},
         {text: '通用文字识别高精度含位置版', value: 'accurate'},
         {text: '表格文字识别v2', value: 'table'},
         {text: '手写文字识别', value: 'handwriting'}
@@ -154,9 +179,9 @@ export default {
   computed: {
     apiUrls() {
       return {
-        general: '/ocr/rest/2.0/ocr/v1/general_basic',
+        accurate_basic: '/ocr/rest/2.0/ocr/v1/accurate_basic',
         accurate: '/ocr/rest/2.0/ocr/v1/accurate',
-        table: '/ocr/rest/2.0/ocr/v2/table',
+        table: '/ocr/rest/2.0/ocr/v1/table',
         handwriting: '/ocr/rest/2.0/ocr/v1/handwriting'
       }
     }
@@ -182,7 +207,8 @@ export default {
           this.accessToken = data.access_token
           return data.access_token
         } else {
-          throw new Error('获取access_token失败')
+          this.showMessage('获取access_token失败')
+          return null
         }
       } catch (error) {
         this.showMessage('获取access_token失败: ' + error.message, 'error')
@@ -251,9 +277,12 @@ export default {
           if (result) {
             this.ocrResults.push({
               imageUrl,
-              text: this.extractText(result),
-              hasPosition: this.selectedScene === 'accurate',
-              textBlocks: this.selectedScene === 'accurate' ? this.extractTextBlocks(result) : null
+              // text: this.extractText(result),
+              // hasPosition: this.selectedScene === 'accurate',
+              // textBlocks: this.selectedScene === 'accurate' ? this.extractTextBlocks(result) : null,
+              scene: this.selectedScene,
+              parsed: this.parseOCRResult(this.selectedScene, result),
+              result: result
             })
           }
         }
@@ -279,6 +308,338 @@ export default {
 
     // 调用百度OCR API
     async callOcrApi(base64Image) {
+      if (this.selectedScene === 'table'){
+        return {
+          "tables_result": [
+            {
+              "header": [],
+              "body": [
+                {
+                  "col_end": 1,
+                  "row_end": 1,
+                  "cell_location": [
+                    {
+                      "x": 9,
+                      "y": 1
+                    },
+                    {
+                      "x": 48,
+                      "y": 1
+                    },
+                    {
+                      "x": 48,
+                      "y": 27
+                    },
+                    {
+                      "x": 9,
+                      "y": 27
+                    }
+                  ],
+                  "row_start": 0,
+                  "col_start": 0,
+                  "words": "1"
+                },
+                {
+                  "col_end": 2,
+                  "row_end": 1,
+                  "cell_location": [
+                    {
+                      "x": 48,
+                      "y": 1
+                    },
+                    {
+                      "x": 361,
+                      "y": 0
+                    },
+                    {
+                      "x": 361,
+                      "y": 27
+                    },
+                    {
+                      "x": 48,
+                      "y": 27
+                    }
+                  ],
+                  "row_start": 0,
+                  "col_start": 1,
+                  "words": "行标签"
+                },
+                {
+                  "col_end": 3,
+                  "row_end": 1,
+                  "cell_location": [
+                    {
+                      "x": 361,
+                      "y": 0
+                    },
+                    {
+                      "x": 539,
+                      "y": 1
+                    },
+                    {
+                      "x": 539,
+                      "y": 27
+                    },
+                    {
+                      "x": 361,
+                      "y": 27
+                    }
+                  ],
+                  "row_start": 0,
+                  "col_start": 2,
+                  "words": "求和项：销售数量"
+                },
+                {
+                  "col_end": 4,
+                  "row_end": 1,
+                  "cell_location": [
+                    {
+                      "x": 539,
+                      "y": 1
+                    },
+                    {
+                      "x": 724,
+                      "y": 0
+                    },
+                    {
+                      "x": 724,
+                      "y": 27
+                    },
+                    {
+                      "x": 539,
+                      "y": 27
+                    }
+                  ],
+                  "row_start": 0,
+                  "col_start": 3,
+                  "words": "求和项：销售额（元）"
+                },
+                {
+                  "col_end": 1,
+                  "row_end": 2,
+                  "cell_location": [
+                    {
+                      "x": 9,
+                      "y": 27
+                    },
+                    {
+                      "x": 48,
+                      "y": 27
+                    },
+                    {
+                      "x": 48,
+                      "y": 55
+                    },
+                    {
+                      "x": 9,
+                      "y": 55
+                    }
+                  ],
+                  "row_start": 1,
+                  "col_start": 0,
+                  "words": "80"
+                },
+                {
+                  "col_end": 2,
+                  "row_end": 2,
+                  "cell_location": [
+                    {
+                      "x": 48,
+                      "y": 27
+                    },
+                    {
+                      "x": 361,
+                      "y": 27
+                    },
+                    {
+                      "x": 361,
+                      "y": 55
+                    },
+                    {
+                      "x": 48,
+                      "y": 55
+                    }
+                  ],
+                  "row_start": 1,
+                  "col_start": 1,
+                  "words": "威士忌酸Whiskysour(有酒精)"
+                },
+                {
+                  "col_end": 3,
+                  "row_end": 2,
+                  "cell_location": [
+                    {
+                      "x": 361,
+                      "y": 27
+                    },
+                    {
+                      "x": 539,
+                      "y": 27
+                    },
+                    {
+                      "x": 539,
+                      "y": 55
+                    },
+                    {
+                      "x": 361,
+                      "y": 55
+                    }
+                  ],
+                  "row_start": 1,
+                  "col_start": 2,
+                  "words": "20"
+                },
+                {
+                  "col_end": 4,
+                  "row_end": 2,
+                  "cell_location": [
+                    {
+                      "x": 539,
+                      "y": 27
+                    },
+                    {
+                      "x": 724,
+                      "y": 27
+                    },
+                    {
+                      "x": 724,
+                      "y": 55
+                    },
+                    {
+                      "x": 539,
+                      "y": 55
+                    }
+                  ],
+                  "row_start": 1,
+                  "col_start": 3,
+                  "words": "960"
+                },
+                {
+                  "col_end": 1,
+                  "row_end": 3,
+                  "cell_location": [
+                    {
+                      "x": 9,
+                      "y": 55
+                    },
+                    {
+                      "x": 48,
+                      "y": 55
+                    },
+                    {
+                      "x": 48,
+                      "y": 82
+                    },
+                    {
+                      "x": 9,
+                      "y": 82
+                    }
+                  ],
+                  "row_start": 2,
+                  "col_start": 0,
+                  "words": "89"
+                },
+                {
+                  "col_end": 2,
+                  "row_end": 3,
+                  "cell_location": [
+                    {
+                      "x": 48,
+                      "y": 55
+                    },
+                    {
+                      "x": 361,
+                      "y": 55
+                    },
+                    {
+                      "x": 361,
+                      "y": 82
+                    },
+                    {
+                      "x": 48,
+                      "y": 82
+                    }
+                  ],
+                  "row_start": 2,
+                  "col_start": 1,
+                  "words": "威士忌酸Whiskysour"
+                },
+                {
+                  "col_end": 3,
+                  "row_end": 3,
+                  "cell_location": [
+                    {
+                      "x": 361,
+                      "y": 55
+                    },
+                    {
+                      "x": 539,
+                      "y": 55
+                    },
+                    {
+                      "x": 539,
+                      "y": 82
+                    },
+                    {
+                      "x": 361,
+                      "y": 82
+                    }
+                  ],
+                  "row_start": 2,
+                  "col_start": 2,
+                  "words": "79"
+                },
+                {
+                  "col_end": 4,
+                  "row_end": 3,
+                  "cell_location": [
+                    {
+                      "x": 539,
+                      "y": 55
+                    },
+                    {
+                      "x": 724,
+                      "y": 55
+                    },
+                    {
+                      "x": 724,
+                      "y": 82
+                    },
+                    {
+                      "x": 539,
+                      "y": 82
+                    }
+                  ],
+                  "row_start": 2,
+                  "col_start": 3,
+                  "words": "3746.91"
+                }
+              ],
+              "table_location": [
+                {
+                  "x": 9,
+                  "y": 0
+                },
+                {
+                  "x": 724,
+                  "y": 0
+                },
+                {
+                  "x": 724,
+                  "y": 82
+                },
+                {
+                  "x": 9,
+                  "y": 82
+                }
+              ],
+              "footer": []
+            }
+          ],
+          "table_num": 1,
+          "log_id": 1875911131224397300
+        }
+      }
       const url = `${this.apiUrls[this.selectedScene]}?access_token=${this.accessToken}`
 
       return await this.$http.post(url,
@@ -289,6 +650,7 @@ export default {
           this.showMessage(res.error_msg || '识别失败');
           return null;
         }
+        console.log(res.data)
         return res.data
       }).catch(err => {
         this.showMessage('API调用失败: ' + err.message, 'error')
@@ -297,45 +659,52 @@ export default {
     },
 
     // 提取文本内容
-    extractText(result) {
-      if (this.selectedScene === 'table') {
-        return result.tables_result[0].body.map(row =>
-            row.map(cell => cell.text).join('\t')
-        ).join('\n')
+
+    parseOCRResult(scene, result) {
+      if (scene in ['accurate_basic', 'handwriting']) {
+        return result.words_result.map(item => item.words).join('\n')
       }
+      if (scene === 'accurate') {
+        return result.words_result.map(item => ({
+          text: item.words,
+          location: item.location
+        }))
+      }
+      if (scene === 'table') {
+        if (!result || !result.tables_result[0].body) return [];
+        const body = result.tables_result[0].body;
+        const rows = [];
+        let currentRow = [];
 
-      return result.words_result.map(item => item.words).join('\n')
-    },
+        body.forEach((cell) => {
+          if (cell.row_start !== currentRow.length) {
+            rows.push(currentRow);
+            currentRow = [];
+          }
+          currentRow.push(cell);
+        });
+        if (currentRow.length > 0) rows.push(currentRow);
 
-    // 提取带位置的文本块
-    extractTextBlocks(result) {
-      return result.words_result.map(item => ({
-        text: item.words,
-        location: item.location
-      }))
+        return rows;
+      }
     },
 
     // 获取位置样式
-    getPositionStyle(block) {
-      const {location} = block
+    getPositionStyle(location) {
+      const scale = 0.5
       return {
         position: 'relative',
-        left: `${location.left}px`,
-        top: `${location.top}px`,
+        left: `${location.left*scale}px`,
+        top: `${location.top*scale}px`,
         width: `${location.width}px`,
-        // height: `${location.height}px`,
         backgroundColor: 'rgba(255, 255, 0, 0.2)',
-        // border: '1px solid rgba(0, 0, 0, 0.1)',
-        fontSize: '12px',
-        // padding: '2px'
+        fontSize: '14px',
       }
     },
 
     // 复制文本
     async copyText(item) {
-      const text = item.hasPosition
-          ? item.textBlocks.map(block => block.text).join('\n')
-          : item.text
+      const text = item.parsed
 
       try {
         await navigator.clipboard.writeText(text)

@@ -19,7 +19,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             auth: false,
         },
         text: {
-            limit: 4096000,
+            limit: 100000,
         },
         file: {
             expire: 31536000,
@@ -27,10 +27,10 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             limit: 10737418240,
         },
         nav: [
-            {icon: '/favicon.ico', label: '云剪贴板', link: '/cloud-cp'},
-            {icon: '/favicon.ico', label: 'GPT', link: '/gpt'},
-            {icon: '/favicon.ico', label: '家庭助理', link: '/ha'},
-            {icon: '/favicon.ico', label: '识图', link: '/ocr'},
+            {icon: '/cloud-cp.ico', label: '云剪贴板', link: '/cloud-cp'},
+            {icon: '/gpt.ico', label: 'GPT', link: '/gpt'},
+            {icon: '/ha.ico', label: '家庭助理', link: '/ha'},
+            {icon: '/ocr.ico', label: '识图', link: '/ocr'},
         ]
     }, null, 4));
 }

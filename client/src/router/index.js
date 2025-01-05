@@ -5,6 +5,7 @@ import Device from '@/views/Device.vue';
 import About from '@/views/About.vue';
 import OCR from '@/views/OcrConverter.vue';
 import CloudApp from "@/views/CloudApp.vue";
+import Test from "@/views/Test.vue";
 
 Vue.use(VueRouter);
 
@@ -41,6 +42,13 @@ const router = new VueRouter({
         {
             path: '/ocr',
             component: OCR,
+            meta: {
+                keepAlive: true,
+            },
+        },
+        {
+            path: '/test',
+            component: Test,
             meta: {
                 keepAlive: true,
             },

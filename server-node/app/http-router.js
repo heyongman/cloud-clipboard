@@ -234,7 +234,7 @@ router.delete('/file/:uuid', async ctx => {
 
 
 router.get('/nav', async ctx => {
-    writeJSON(ctx, 200, config.nav);
+    writeJSON(ctx, 200, config);
 });
 
 router.all('/ocr/(.*)', async (ctx) => {
@@ -259,6 +259,7 @@ router.all('/ocr/(.*)', async (ctx) => {
         ctx.body = response.data;
         ctx.set(response.headers);
     } catch (error) {
+        console.log(error)
         // 处理错误
         ctx.status = error.response ? error.response.status : 500;
         ctx.body = error.response ? error.response.data : 'Internal Server Error';
