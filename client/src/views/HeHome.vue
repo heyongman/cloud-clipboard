@@ -1,6 +1,6 @@
 <template>
-  <v-container fluid>
-    <v-row style="height: 80vh; display: flex; justify-content: center; align-items: center;">
+  <v-container fluid fill-height>
+    <v-row align="center" justify="center">
       <v-col
           v-for="(site, index) in sites"
           :key="index"
@@ -34,13 +34,13 @@ export default {
     this.fetchNavigationData()
   },
   methods: {
-    navigateTo(link) {
+    async navigateTo(link) {
       let routePath = link
       if (link.startsWith('/cloud-cp') && this.serverConfig.host) {
-        const hostAndPort = this.serverConfig.host[0]+':'+this.serverConfig.port
-        const url = 'ws://'+hostAndPort
-        if (this.checkWebSocket(url)){
-          window.open('http://'+hostAndPort+'/#/cloud-cp', '_blank');
+        const hostAndPort = this.serverConfig.host[0] + ':' + this.serverConfig.port
+        const checkCon = await this.checkWebSocket('wss://' + hostAndPort)
+        if (checkCon === true) {
+          window.open('http://' + hostAndPort + '/#/cloud-cp', '_blank');
           return;
         }
       }
@@ -61,23 +61,23 @@ export default {
           this.$toast('发送失败:'+error);
       });
     },
-    checkWebSocket(url) {
-      return new Promise((resolve, reject) => {
+    async checkWebSocket(url) {
+      return await new Promise((resolve, reject) => {
         const socket = new WebSocket(url);
 
-        const timeout = 500;
         const timer = setTimeout(() => {
-          socket.close(); // 关闭连接
-          reject(false); // 超时返回 false
-        }, timeout);
-
-        // 连接成功
-        socket.onopen = () => {
-          clearTimeout(timer); // 清除超时
           socket.close();
-          resolve(true); // 成功返回 true
+          reject(false);
+        }, 500);
+
+        socket.onopen = () => {
+          clearTimeout(timer);
+          socket.close();
+          resolve(true);
         };
-      });
+      }).catch(err => {
+        return false
+      })
     }
 
   }
@@ -88,17 +88,17 @@ export default {
 <style scoped>
 .icon-card {
   cursor: pointer;
-  transition: transform 0.3s ease, box-shadow 0.3s;
+  transition: transform 0.3s ease;
   background-color: white;
   border-radius: 10px;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-  //transition: transform 0.3s ease;
   width: 55px;
   height: 55px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  will-change: transform;
 }
 .icon-card:hover {
   transform: scale(1.2);
