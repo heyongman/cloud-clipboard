@@ -233,6 +233,29 @@ router.delete('/file/:uuid', async ctx => {
 });
 
 
+router.get('/content/:id', async ctx => {
+    const message = messageQueue.queue.find(e => (
+        e.event === 'receive' &&
+        e.data.room === (ctx.query.room || '') &&
+        e.data.id === parseInt(ctx.params.id)
+    ));
+    if (!message) return ctx.status = 404;
+    switch (message.data.type) {
+        case 'text':
+            ctx.header['Content-Type'] = 'text/plain';
+            ctx.body = message.data.content
+                .replaceAll('&amp;', '&')
+                .replaceAll('&lt;', '<')
+                .replaceAll('&gt;', '>')
+                .replaceAll('&quot;', '"')
+                .replaceAll('&#039;', '\'');
+            break;
+        case 'file':
+            ctx.redirect(`${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/file/${message.data.cache}`);
+            break;
+    }
+});
+
 router.get('/nav', async ctx => {
     writeJSON(ctx, 200, config);
 });

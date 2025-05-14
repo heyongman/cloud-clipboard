@@ -22,6 +22,7 @@
 </template>
 
 <script>
+
 export default {
   name: "HeHome",
   data() {
@@ -38,9 +39,9 @@ export default {
       let routePath = link
       if (link.startsWith('/cloud-cp') && this.serverConfig.host) {
         const hostAndPort = this.serverConfig.host[0] + ':' + this.serverConfig.port
-        const checkCon = await this.checkWebSocket('wss://' + hostAndPort)
+        const checkCon = await this.testConnectivity(window.location.protocol+'//' + hostAndPort+'/test')
         if (checkCon === true) {
-          window.open('http://' + hostAndPort + '/#/cloud-cp', '_blank');
+          window.open(window.location.protocol+'//' + hostAndPort + '/#/cloud-cp', '_blank');
           return;
         }
       }
@@ -78,6 +79,17 @@ export default {
       }).catch(err => {
         return false
       })
+    },
+
+    async testConnectivity(url) {
+      // this.$http.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
+      return await this.$http.get(url, {timeout: 500})
+          .then(resp => {
+            return true
+          })
+          .catch(err => {
+            return false
+          })
     }
 
   }

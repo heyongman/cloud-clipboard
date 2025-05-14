@@ -6,7 +6,7 @@
         app
     >
       <v-list>
-        <v-list-item link href="#/cloud-cp">
+        <v-list-item link :href="`#/cloud-cp/?room=${$root.room}`">
           <v-list-item-action>
             <v-icon>{{mdiContentPaste}}</v-icon>
           </v-list-item-action>
@@ -188,11 +188,11 @@
               color="primary darken-1"
               text
               @click="
-                            $root.room = $root.roomInput;
-                            $root.roomDialog = false;
-                            $root.disconnect();
-                            $root.connect();
-                        "
+                $router.push({ path: '/cloud-cp', query: { room: $root.roomInput }});
+                $root.roomDialog = false;
+                $root.disconnect();
+                $root.connect();
+              "
           >进入房间</v-btn>
         </v-card-actions>
       </v-card>

@@ -5,8 +5,10 @@ import path from 'node:path';
 
 import config from './config.js';
 
-const storageFolder = path.join(os.tmpdir(), '.cloud-clipboard-storage');
-
+const storageFolder = config.server.storageDir || path.join(os.tmpdir(), '.cloud-clipboard-storage');
+if (!fs.existsSync(storageFolder)) {
+    fs.mkdirSync(storageFolder, { recursive: true });
+}
 class UploadedFile {
     /**
      * @param {String} name

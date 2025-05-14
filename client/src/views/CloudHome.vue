@@ -119,6 +119,13 @@ export default {
   },
   created() {
     this.$root.connect()
-  }
+  },
+  beforeRouteEnter(to, from, next) {
+    next(vm => vm.$root.room = to.query.room);
+  },
+  beforeRouteUpdate(to, from, next) {
+    this.$root.room = to.query.room;
+    next();
+  },
 }
 </script>

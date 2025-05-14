@@ -5,13 +5,16 @@ export default {
             websocketConnecting: false,
             authCode: localStorage.getItem('auth') || '',
             authCodeDialog: false,
-            room: localStorage.getItem('room') || '',
+            room: this.$router.currentRoute.query.room || '',
             roomInput: '',
             roomDialog: false,
             retry: 0,
             event: {
                 receive: data => {
                     this.$root.received.unshift(data);
+                },
+                receiveMulti: data => {
+                    this.$root.received.unshift(...Array.from(data).reverse());
                 },
                 revoke: data => {
                     let index = this.$root.received.findIndex(e => e.id === data.id);
@@ -51,11 +54,10 @@ export default {
             });
             this.$http.get('server').then(response => {
                 if (this.authCode) localStorage.setItem('auth', this.authCode);
-                this.room = this.room.trim();
-                localStorage.setItem('room', this.room);
                 return new Promise((resolve, reject) => {
                     const wsUrl = new URL(response.data.server);
                     wsUrl.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    wsUrl.port = location.port;
                     if (response.data.auth) {
                         if (this.authCode) {
                             wsUrl.searchParams.set('auth', this.authCode);
@@ -91,9 +93,11 @@ export default {
         },
         disconnect() {
             this.websocketConnecting = false;
-            this.websocket.onclose = () => {};
-            this.websocket.close();
-            this.websocket = null;
+            if (this.websocket) {
+                this.websocket.onclose = () => {};
+                this.websocket.close();
+                this.websocket = null;
+            }
             this.$root.device = [];
         },
         failure() {

@@ -207,9 +207,30 @@ export default {
           return null
         }
       } catch (error) {
-        this.showMessage('获取access_token失败: ' + error.message, 'error')
+        this.showMessage('获取access_token失败: ' + error, 'error')
         return null
       }
+    },
+
+    // 调用百度OCR API
+    async callOcrApi(base64Image) {
+      const url = `${this.apiUrls[this.selectedScene]}?access_token=${this.accessToken}`
+
+      const formData = new FormData();
+      formData.append('image', base64Image);
+      return await this.$http.post(url,
+          formData,
+          {headers: {'Content-Type': 'application/x-www-form-urlencoded'}},
+      ).then(res => {
+        if (res.data.error_code) {
+          this.showMessage(res.data.error_msg || '识别失败');
+          return null;
+        }
+        console.log(res.data)
+        return res.data
+      }).catch(err => {
+        this.showMessage('API调用失败: ' + err, 'error')
+      })
     },
 
     // 显示消息提示
@@ -257,7 +278,9 @@ export default {
 
       try {
         if (!this.accessToken) {
-          await this.getAccessToken()
+          if (!await this.getAccessToken()) {
+            return
+          }
         }
 
         for (const file of files) {
@@ -296,25 +319,6 @@ export default {
         }
         reader.onerror = reject
         reader.readAsDataURL(file)
-      })
-    },
-
-    // 调用百度OCR API
-    async callOcrApi(base64Image) {
-      const url = `${this.apiUrls[this.selectedScene]}?access_token=${this.accessToken}`
-
-      return await this.$http.post(url,
-          {'image': base64Image},
-          {headers: {'Content-Type': 'application/x-www-form-urlencoded'}},
-      ).then(res => {
-        if (res.error_code) {
-          this.showMessage(res.error_msg || '识别失败');
-          return null;
-        }
-        console.log(res.data)
-        return res.data
-      }).catch(err => {
-        this.showMessage('API调用失败: ' + err.message, 'error')
       })
     },
 

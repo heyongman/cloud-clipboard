@@ -15,27 +15,31 @@ import proxy from 'koa-proxies';
 import config from './app/config.js';
 import httpRouter from './app/http-router.js';
 import wsRouter from './app/ws-router.js';
-import {storageFolder} from "./app/uploaded-file.js";
-
-const storagePath = storageFolder;
-if (!fs.existsSync(storagePath)) {
-    fs.mkdirSync(storagePath);
-}
 
 process.env.VERSION = `node-${JSON.parse(fs.readFileSync(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'package.json'))).version}`;
 
 const app = koaWebsocket(new Koa);
 
-app.use(proxy('/ha', {
-    target: 'http://192.168.2.13:8123',
-    changeOrigin: true,
-    // 如果想去掉 /ha 前缀，添加以下配置
-    rewrite: path => path.replace(/^\/ha/, ''),
-    logs: true // 开启日志，方便调试
-}));
+// app.use(proxy('/ha', {
+//     target: 'http://192.168.2.13:8123',
+//     changeOrigin: true,
+//     // 如果想去掉 /ha 前缀，添加以下配置
+//     rewrite: path => path.replace(/^\/ha/, ''),
+//     logs: true // 开启日志，方便调试
+// }));
 
 app.use(async (ctx, next) => {
     const startTime = performance.now();
+    // 设置允许跨域的源
+    ctx.set('Access-Control-Allow-Origin', '*'); // 允许所有来源
+    ctx.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    ctx.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+
+    // 处理预检请求
+    if (ctx.request.path === '/test') {
+        ctx.status = 204; // 204 No Content
+        return;
+    }
 
     await next();
 
