@@ -14,6 +14,14 @@
                         <v-list-item-title>剪贴板</v-list-item-title>
                     </v-list-item-content>
                 </v-list-item>
+              <v-list-item link href="#/ocr">
+                <v-list-item-action>
+                  <v-icon>{{mdiOcr}}</v-icon>
+                </v-list-item-action>
+                <v-list-item-content>
+                  <v-list-item-title>图片识别</v-list-item-title>
+                </v-list-item-content>
+              </v-list-item>
                 <v-list-item link href="#/device">
                     <v-list-item-action>
                         <v-icon>{{mdiDevices}}</v-icon>
@@ -66,25 +74,6 @@
                         </v-list-item-group>
                     </v-list>
                 </v-menu>
-
-                <!-- customize primary color -->
-                <v-list-item link @click="colorDialog = true; drawer=false;">
-                    <v-list-item-action>
-                        <v-icon>{{mdiPalette}}</v-icon>
-                    </v-list-item-action>
-                    <v-list-item-content>
-                        <v-list-item-title>更改主题色</v-list-item-title>
-                    </v-list-item-content>
-                </v-list-item>
-
-                <v-list-item link href="#/about">
-                    <v-list-item-action>
-                        <v-icon>{{mdiInformation}}</v-icon>
-                    </v-list-item-action>
-                    <v-list-item-content>
-                        <v-list-item-title>关于</v-list-item-title>
-                    </v-list-item-content>
-                </v-list-item>
             </v-list>
         </v-navigation-drawer>
 
@@ -232,17 +221,17 @@
 
 <script>
 import {
-    mdiContentPaste,
-    mdiDevices,
-    mdiInformation,
-    mdiLanConnect,
-    mdiLanDisconnect,
-    mdiLanPending,
-    mdiBrightness4,
-    mdiBulletinBoard,
-    mdiDiceMultiple,
-    mdiPalette,
-    mdiNotificationClearAll,
+  mdiContentPaste,
+  mdiDevices,
+  mdiInformation,
+  mdiLanConnect,
+  mdiLanDisconnect,
+  mdiLanPending,
+  mdiBrightness4,
+  mdiBulletinBoard,
+  mdiDiceMultiple,
+  mdiPalette,
+  mdiNotificationClearAll, mdiOcr,
 } from '@mdi/js';
 
 export default {
@@ -253,6 +242,7 @@ export default {
             clearAllDialog: false,
             mdiContentPaste,
             mdiDevices,
+            mdiOcr,
             mdiInformation,
             mdiLanConnect,
             mdiLanDisconnect,

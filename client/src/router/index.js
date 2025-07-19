@@ -1,6 +1,7 @@
 import Vue from 'vue';
 import VueRouter from 'vue-router';
 import Home from '@/views/Home.vue';
+import Ocr from '@/views/Ocr.vue';
 import Device from '@/views/Device.vue';
 import About from '@/views/About.vue';
 
@@ -11,6 +12,13 @@ const router = new VueRouter({
         {
             path: '/',
             component: Home,
+            meta: {
+                keepAlive: true,
+            },
+        },
+        {
+            path: '/ocr',
+            component: Ocr,
             meta: {
                 keepAlive: true,
             },

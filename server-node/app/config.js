@@ -9,8 +9,9 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
     console.log('\x1b[93mA default config file is created and used. Check the descriptions in the repository\'s README.md to modify it.\x1b[39m');
     fs.writeFileSync(defaultConfigPath, JSON.stringify({
         server: {
-            host: [],
-            port: 9501,
+            host: ['::'],
+            port: 80,
+            httpsPort: 443,
             uds: null,
             prefix: '',
             key: null,

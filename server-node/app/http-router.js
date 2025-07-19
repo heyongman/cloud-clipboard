@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import KoaRouter from '@koa/router';
 import { koaBody } from 'koa-body';
-import koaWebsocket from 'koa-websocket';
 
 import config from './config.js';
 import messageQueue from './message.js';
@@ -203,37 +202,81 @@ router.post(
 router.post(
     '/upload/chunk',
     authMiddleware,
-    koaBody({
-        multipart: false,
-        urlencoded: false,
-        text: true,
-        json: false,
-        textLimit: 1024,
-    }),
+    koaBody({multipart: false, text: false, json: true,}),
     async ctx => {
-        /** @type {String} */
-        const filename = ctx.request.body;
-        const file = new UploadedFile(filename);
-        uploadFileMap.set(file.uuid, file);
-        writeJSON(ctx, 200, {
-            uuid: file.uuid,
-        });
+        try {
+            const { filename, size } = ctx.request.body;
+            if (!filename || typeof size !== 'number') {
+                return writeJSON(ctx, 400, '需要提供 filename 和 size');
+            }
+            if (size > config.file.limit) {
+                return writeJSON(ctx, 400, '文件大小超过限制');
+            }
+
+            const file = new UploadedFile(filename, size);
+            await file.open(); // 打开文件并预分配空间
+
+            uploadFileMap.set(file.uuid, file);
+
+            writeJSON(ctx, 200, {
+                uuid: file.uuid,
+                chunkSize: config.file.chunk
+            });
+        } catch (error) {
+            writeJSON(ctx, 500, error.message || '创建上传任务失败');
+        }
     }
 );
 
-router.post('/upload/chunk/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
+// 2. 上传分片的接口
+// URL 中增加 chunkIndex 来标识分片顺序
+router.post('/upload/chunk/:uuid([0-9a-f]{32})/:chunkIndex(\\d+)', authMiddleware, async ctx => {
     try {
-        const file = uploadFileMap.get(ctx.params.uuid);
+        const { uuid, chunkIndex } = ctx.params;
+        const file = uploadFileMap.get(uuid);
+
         if (!file) {
             throw new Error('无效的 UUID');
         }
-        const data = await new Promise((resolve, reject) => {
-            let data = Buffer.alloc(0);
-            ctx.req.on('data', chunk => data = Buffer.concat([data, chunk]));
-            ctx.req.on('error', error => reject(error));
-            ctx.req.on('end', () => resolve(data));
+
+        const offset = parseInt(chunkIndex, 10) * config.file.chunk;
+
+        // 使用 Promise 包装流式处理，以便在 async/await 中使用
+        await new Promise((resolve, reject) => {
+            // 'r+' 标志表示以读写模式打开文件，如果文件不存在则失败。
+            // 这很重要，确保我们写入的是之前创建好的文件，而不是新文件。
+            const writableStream = fs.createWriteStream(file.path, {
+                flags: 'r+',
+                start: offset
+            });
+
+            // 将请求的可读流直接“管道”到文件的可写流
+            ctx.req.pipe(writableStream);
+
+            // 监听流的结束事件
+            writableStream.on('finish', () => {
+                // 当分片成功写入磁盘后，更新已上传的大小
+                // 注意：这里我们无法直接从流中获取写入的字节数，
+                // 可以在前端发送分片大小时一并传来，或在此处重新 stat 文件计算，但最简单的是信任客户端数据
+                // file.uploadedSize += writableStream.bytesWritten; // 更新大小
+                resolve();
+            });
+
+            // 监听错误事件
+            writableStream.on('error', (err) => {
+                console.error('文件写入流错误:', err);
+                reject(new Error('文件分片写入失败'));
+            });
+
+            ctx.req.on('error', (err) => {
+                console.error('请求流错误:', err);
+                // 中断写入流并拒绝 Promise
+                writableStream.destroy();
+                reject(new Error('数据传输中断'));
+            });
         });
-        await file.write(data);
+
+        // await file.write(data, parseInt(chunkIndex, 10));
         writeJSON(ctx);
     } catch (error) {
         writeJSON(ctx, 400, error.message || error);
@@ -247,6 +290,8 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
             throw new Error('无效的 UUID');
         }
         await file.finish();
+        await file.close(); // 关闭文件句柄
+
 
         const message = {
             event: 'receive',
@@ -330,7 +375,8 @@ router.delete('/file/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
     saveHistory();
 });
 
-router.get('/content/:id([0-9]+)', authMiddleware, async ctx => {
+// file消息不做权限校验，方便分享
+router.get('/content/:id([0-9]+)', async ctx => {
     const message = messageQueue.queue.find(e => (
         e.event === 'receive' &&
         e.data.room === (ctx.query.room || '') &&
@@ -339,6 +385,12 @@ router.get('/content/:id([0-9]+)', authMiddleware, async ctx => {
     if (!message) return ctx.status = 404;
     switch (message.data.type) {
         case 'text':
+            if (config.server.auth) {
+                if (ctx.header.authorization !== `Bearer ${config.server.auth}`) {
+                    ctx.status = 403
+                    return
+                }
+            }
             ctx.header['Content-Type'] = 'text/plain';
             ctx.body = message.data.content
                 .replaceAll('&amp;', '&')
