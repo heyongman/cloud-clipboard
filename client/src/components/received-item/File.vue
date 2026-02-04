@@ -16,14 +16,10 @@
                     <div class="flex-grow-1 mr-2" style="min-width: 0">
                         <div
                             class="title text-truncate text--primary"
-                            :style="{'text-decoration': expired ? 'line-through' : ''}"
                             :title="meta.name"
                         >{{meta.name}}</div>
                         <div class="caption">
                             {{meta.size | prettyFileSize}}
-                            <template v-if="$vuetify.breakpoint.smAndDown"><br></template>
-                            <template v-else>|</template>
-                            {{expired ? '已' : '将'}}于 {{meta.expire | formatTimestamp}} 过期
                         </div>
                     </div>
 
@@ -34,13 +30,13 @@
                                     v-on="on"
                                     icon
                                     color="grey"
-                                    :href="expired ? null : `file/${meta.cache}/${encodeURIComponent(meta.name)}`"
-                                    :download="expired ? null : meta.name"
+                                    :href="`file/${meta.cache}/${encodeURIComponent(meta.name)}`"
+                                    :download="meta.name"
                                 >
-                                    <v-icon>{{expired ? mdiDownloadOff : mdiDownload}}</v-icon>
+                                    <v-icon>{{mdiDownload}}</v-icon>
                                 </v-btn>
                             </template>
-                            <span>{{expired ? '已过期' : '下载'}}</span>
+                            <span>下载</span>
                         </v-tooltip>
                         <template v-if="meta.thumbnail || isPreviewableVideo || isPreviewableAudio">
                             <v-progress-circular
@@ -50,7 +46,7 @@
                             >{{loadedPreview / meta.size | percentage(0)}}</v-progress-circular>
                             <v-tooltip bottom>
                                 <template v-slot:activator="{ on }">
-                                    <v-btn v-on="on" icon color="grey" @click="!expired && previewFile()">
+                                    <v-btn v-on="on" icon color="grey" @click="previewFile()">
                                         <v-icon>{{(isPreviewableVideo || isPreviewableAudio) ? mdiMovieSearchOutline : mdiImageSearchOutline}}</v-icon>
                                     </v-btn>
                                 </template>
@@ -111,7 +107,6 @@
 import {
     mdiContentCopy,
     mdiDownload,
-    mdiDownloadOff,
     mdiClose,
     mdiImageSearchOutline,
     mdiLinkVariant,
@@ -137,7 +132,6 @@ export default {
             srcPreview: null,
             mdiContentCopy,
             mdiDownload,
-            mdiDownloadOff,
             mdiClose,
             mdiImageSearchOutline,
             mdiLinkVariant,
@@ -145,9 +139,6 @@ export default {
         };
     },
     computed: {
-        expired() {
-            return this.$root.date.getTime() / 1000 > this.meta.expire;
-        },
         isPreviewableVideo() {
             return this.meta.name.match(/\.(mp4|webm|ogv)$/gi);
         },
@@ -199,7 +190,6 @@ export default {
             this.$http.delete(`revoke/${this.meta.id}`, {
                 params: new URLSearchParams([['room', this.$root.room]]),
             }).then(() => {
-                if (this.expired) return;
                 this.$http.delete(`file/${this.meta.cache}`).then(() => {
                     this.$toast(`已删除文件 ${this.meta.name}`);
                 }).catch(error => {

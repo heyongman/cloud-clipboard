@@ -42,6 +42,7 @@ export default {
             ).then(response => {
                 this.$toast('发送成功');
                 this.$root.send.text = '';
+                this.$root.refresh();
             }).catch(error => {
                 if (error.response && error.response.data.msg) {
                     this.$toast(`发送失败：${error.response.data.msg}`);

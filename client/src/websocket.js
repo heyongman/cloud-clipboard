@@ -45,7 +45,7 @@ export default {
             if (this.loading) return;
             this.loading = true;
             try {
-                const params = { room: this.room, limit: 20 };
+                const params = { room: this.room, limit: 10 };
                 if (beforeId) params.beforeId = beforeId;
                 const response = await this.$http.get('messages', { params });
                 const { items, hasMore } = response.data.result;
@@ -126,9 +126,6 @@ export default {
                 // 获取消息列表
                 this.hasMore = true;
                 await this.fetchMessages();
-
-                // 启动轮询
-                this.startPolling();
 
                 this.connected = true;
                 this.connecting = false;
