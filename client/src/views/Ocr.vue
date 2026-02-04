@@ -75,48 +75,41 @@
                 </v-card-text>
               </template>
 
-              <!-- 带位置的识别结果 -->
-<!--              <template v-else-if="item.scene === 'accurate'">-->
-<!--                <div-->
-<!--                    v-for="(item, index) in item.parsed.data"-->
-<!--                    :key="index"-->
-<!--                    class="text-block-with-position"-->
-<!--                    :style="getPositionStyle(item.location)"-->
-<!--                >-->
-<!--                  {{ item.text }}-->
-<!--                </div>-->
-<!--              </template>-->
-
-              <!-- 表格识别结果 -->
               <template v-else-if="item.scene === 'table'">
-                <v-card-text>
-                  <v-simple-table>
-                    <template v-slot:default>
-
-                      <tbody>
-                      <tr v-for="(row, rowIndex) in item.parsed.data"
-                          :key="rowIndex">
-                        <td v-for="(cell, cellIndex) in row"
-                            :key="cellIndex">
-                          {{ cell }}
-                        </td>
-                      </tr>
-                      </tbody>
-                    </template>
-                  </v-simple-table>
+                <!-- 为表格识别结果提供一个占位符UI -->
+                <v-card-text class="text-content d-flex flex-column justify-center align-center fill-height">
+                  <v-icon size="50" color="green darken-1">mdi-file-excel</v-icon>
+                  <div class="mt-3 text-subtitle-1">表格识别成功</div>
+                  <div class="text-caption">点击下方按钮下载Excel文件</div>
                 </v-card-text>
               </template>
 
             </v-sheet>
             <div class="d-flex justify-center mb-4">
-              <v-btn
-                  color="primary"
-                  text
-                  @click="copyText(item)"
-                  class="mt-2"
-              >
-                复制文本
-              </v-btn>
+              <template v-if="['accurate', 'accurate_basic', 'handwriting'].includes(item.scene)">
+                <v-btn
+                    color="primary"
+                    text
+                    @click="copyText(item)"
+                    class="mt-2"
+                >
+                  <v-icon left>mdi-content-copy</v-icon>
+                  复制文本
+                </v-btn>
+              </template>
+
+              <template v-else-if="item.scene === 'table'">
+                <!-- 下载Excel按钮 -->
+                <v-btn
+                    color="primary"
+                    text
+                    @click="downloadExcel(item)"
+                    class="mt-2"
+                >
+                  <v-icon left>mdi-download</v-icon>
+                  下载 Excel
+                </v-btn>
+              </template>
               <v-btn
                   color="error"
                   text
@@ -148,6 +141,8 @@
 </template>
 
 <script>
+import {copyToClipboard} from "@/util";
+
 export default {
   name: 'Ocr',
   data() {
@@ -219,6 +214,7 @@ export default {
 
       const formData = new FormData();
       formData.append('image', base64Image);
+      formData.append('return_excel', 'true');
       return await this.$http.post(url,
           formData,
           {headers: {'Content-Type': 'application/x-www-form-urlencoded'}},
@@ -366,62 +362,67 @@ export default {
       }
 
       if (scene === 'table') {
-        if (!result?.tables_result?.[0]?.body) {
-          return;
+        if (!result?.excel_file) {
+          return { text: '表格识别失败或无数据返回', data: null };
         }
-        const cells = result.tables_result[0].body;
-
-        // 按行分组
-        const rowGroups = {};
-        cells.forEach(cell => {
-          const rowIndex = cell.row_start;
-          if (!rowGroups[rowIndex]) {
-            rowGroups[rowIndex] = [];
-          }
-          rowGroups[rowIndex].push(cell);
-        });
-
-        // 对每行的单元格按列索引排序
-        Object.keys(rowGroups).forEach(rowIndex => {
-          rowGroups[rowIndex].sort((a, b) => a.col_start - b.col_start);
-        });
-
-        // 提取表头（第一行）
-        // const headers = rowGroups[0].map(cell => cell.words);
-
-        // 提取数据行
-        const data = Object.keys(rowGroups)
-            // .filter(rowIndex => rowIndex > 0) // 排除表头行
-            .sort((a, b) => Number(a) - Number(b)) // 按行号排序
-            .map(rowIndex => rowGroups[rowIndex].map(cell => cell.words));
-
-        const text = data.map(row => row.join('\t')).join('\n')
-
-        return {text: text, data: data}
+        return {text: null, data: result.excel_file}
       }
       return {}
     },
+// 2. 添加 downloadExcel 方法 (核心功能)
+    downloadExcel(item) {
+      const base64Data = item.parsed.data;
 
-    // 获取位置样式
-    getPositionStyle(location) {
-      const scale = 0.5
-      return {
-        position: 'relative',
-        left: `${location.left*scale}px`,
-        top: `${location.top*scale}px`,
-        width: `${location.width}px`,
-        backgroundColor: 'rgba(255, 255, 0, 0.2)',
-        fontSize: '14px',
+      if (!base64Data) {
+        // 可以添加一个用户提示，例如使用 snackbar
+        this.showMessage('没有可供下载的 Excel 数据！');
+        return;
+      }
+
+      try {
+        // Step 1: 将 Base64 字符串解码为二进制字符串
+        const byteCharacters = atob(base64Data);
+
+        // Step 2: 创建一个 Uint8Array 类型的数组来存储二进制数据
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+
+        // Step 3: 使用二进制数据创建一个 Blob 对象，并指定MIME类型
+        // .xlsx 文件的 MIME 类型
+        const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+        // Step 4: 创建一个临时的 a 标签来触发下载
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+
+        // 设置下载文件的名称
+        const fileName = `ocr_${new Date().getTime()}.xlsx`;
+        link.setAttribute('download', fileName);
+
+        // 将 a 标签添加到文档中，模拟点击，然后移除
+        document.body.appendChild(link);
+        link.click();
+
+        // 清理：移除 a 标签并释放创建的 URL 对象
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+
+      } catch (error) {
+        this.showMessage('下载失败，Base64数据可能已损坏。');
+        console.error('Failed to download Excel file:', error);
       }
     },
 
     // 复制文本
     async copyText(item) {
-      try {
-        await navigator.clipboard.writeText(item.parsed.text)
-        this.showMessage('复制成功')
-      } catch (err) {
-        this.showMessage('复制失败: ' + err.message, 'error')
+      const result = await copyToClipboard(this.decodedContent);
+      if (result.success) {
+        this.$toast('复制成功');
+      } else {
+        this.$toast.error('复制失败');
       }
     },
 
