@@ -117,6 +117,7 @@ import {
     mdiLinkVariant,
     mdiMovieSearchOutline,
 } from '@mdi/js';
+import { copyToClipboard } from '@/util.js';
 
 export default {
     name: 'received-file',
@@ -185,10 +186,14 @@ export default {
                 });
             }
         },
-        copyLink() {
-            navigator.clipboard
-                .writeText(`${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`)
-                .then(() => this.$toast('复制成功'));
+        async copyLink() {
+            const url = `${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`;
+            const result = await copyToClipboard(url);
+            if (result.success) {
+                this.$toast('复制成功');
+            } else {
+                this.$toast.error('复制失败，请手动复制链接');
+            }
         },
         deleteItem() {
             this.$http.delete(`revoke/${this.meta.id}`, {

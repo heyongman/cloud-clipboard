@@ -10,7 +10,15 @@
                 <v-fade-transition group>
                     <div :is="`received-${item.type}`" v-for="item in $root.received" :key="item.id" :meta="item"></div>
                 </v-fade-transition>
-                <div class="text-center caption text--secondary py-2">{{$root.received.length ? '已经到底了哦～' : '这里空空的'}}</div>
+
+                <!-- 触底加载更多 -->
+                <div v-if="$root.hasMore" v-intersect="onIntersect" class="text-center py-4">
+                    <v-progress-circular v-if="$root.loading" indeterminate color="primary" size="24"></v-progress-circular>
+                    <span v-else class="caption text--secondary">下滑加载更多</span>
+                </div>
+                <div v-else class="text-center caption text--secondary py-2">
+                    {{$root.received.length ? '已经到底了哦～' : '这里空空的'}}
+                </div>
             </v-col>
         </v-row>
 
@@ -104,6 +112,12 @@ export default {
         },
         setTimeout(f, t) {
             return setTimeout(f, t);
+        },
+        onIntersect(entries) {
+            // 当触底元素进入视口时加载更多
+            if (entries[0].isIntersecting && !this.$root.loading && this.$root.hasMore) {
+                this.$root.loadMore();
+            }
         },
     },
     watch: {

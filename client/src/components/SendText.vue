@@ -15,7 +15,7 @@
             <v-btn
                 color="primary"
                 :block="$vuetify.breakpoint.smAndDown"
-                :disabled="!$root.send.text || !$root.websocket || $root.send.text.length > $root.config.text.limit"
+                :disabled="!$root.send.text || !$root.connected || $root.send.text.length > $root.config.text.limit"
                 @click="send"
             >发送</v-btn>
         </div>

@@ -69,7 +69,7 @@
             <v-btn
                 color="primary"
                 :block="$vuetify.breakpoint.smAndDown"
-                :disabled="!$root.send.files.length || !$root.websocket || progress"
+                :disabled="!$root.send.files.length || !$root.connected || progress"
                 @click="send"
             >发送</v-btn>
         </div>
