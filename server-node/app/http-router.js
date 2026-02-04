@@ -55,6 +55,95 @@ router.get('/server', async ctx => {
     };
 });
 
+// 获取服务配置（HTTP 替代 WebSocket config 事件）
+router.get('/config', authMiddleware, async ctx => {
+    writeJSON(ctx, 200, {
+        version: process.env.VERSION || 'unknown',
+        text: config.text,
+        file: config.file,
+    });
+});
+
+// 分页获取消息列表（HTTP 替代 WebSocket receiveMulti 事件）
+// 参数: room, limit, beforeId(向下翻页获取更旧消息), afterId(拉取新增消息)
+router.get('/messages', authMiddleware, async ctx => {
+    const room = ctx.query.room || '';
+    const limit = Math.min(parseInt(ctx.query.limit) || 20, 100);
+    const beforeId = ctx.query.beforeId ? parseInt(ctx.query.beforeId) : null;
+    const afterId = ctx.query.afterId ? parseInt(ctx.query.afterId) : null;
+
+    // 过滤当前房间的消息，按 id 降序排列（最新的在前）
+    let items = messageQueue.queue
+        .filter(e => e.event === 'receive' && e.data.room === room)
+        .map(e => e.data)
+        .sort((a, b) => b.id - a.id);
+
+    if (afterId !== null) {
+        // 拉取比 afterId 更新的消息（id 更大）
+        items = items.filter(e => e.id > afterId);
+    } else if (beforeId !== null) {
+        // 拉取比 beforeId 更旧的消息（id 更小）
+        items = items.filter(e => e.id < beforeId);
+    }
+
+    const hasMore = items.length > limit;
+    items = items.slice(0, limit);
+
+    writeJSON(ctx, 200, {
+        items,
+        hasMore,
+        nextCursor: items.length ? items[items.length - 1].id : null,
+    });
+});
+
+// 更新文本消息
+router.put(
+    '/text/:id(\\d+)',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: true,
+        json: false,
+        textLimit: 1048576,
+    }),
+    async ctx => {
+        const id = parseInt(ctx.params.id);
+        const room = ctx.query.room || '';
+        const message = messageQueue.queue.find(
+            e => e.event === 'receive' &&
+                 e.data.id === id &&
+                 e.data.room === room &&
+                 e.data.type === 'text'
+        );
+
+        if (!message) {
+            writeJSON(ctx, 404, {}, '消息不存在');
+            return;
+        }
+
+        let body = ctx.request.body;
+        if (body.length > config.text.limit) {
+            writeJSON(ctx, 400, {}, `文本长度不能超过 ${config.text.limit} 字`);
+            return;
+        }
+
+        // HTML 转义
+        body = body
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll('\'', '&#039;');
+
+        message.data.content = body;
+        message.data.updatedAt = Date.now();
+
+        writeJSON(ctx, 200, { updatedAt: message.data.updatedAt });
+        saveHistory();
+    }
+);
+
 router.post(
     '/text',
     authMiddleware,

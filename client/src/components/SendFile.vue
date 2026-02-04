@@ -69,7 +69,7 @@
             <v-btn
                 color="primary"
                 :block="$vuetify.breakpoint.smAndDown"
-                :disabled="!$root.send.files.length || !$root.websocket || progress"
+                :disabled="!$root.send.files.length || !$root.connected || progress"
                 @click="send"
             >发送</v-btn>
         </div>
@@ -141,6 +141,7 @@ export default {
 
           this.$toast('所有文件发送成功');
           this.$root.send.files.splice(0);
+          this.$root.refresh();
         } catch (error) {
           console.error("上传失败:", error);
           if (error.response && error.response.data.msg) {

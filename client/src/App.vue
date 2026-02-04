@@ -22,6 +22,7 @@
                   <v-list-item-title>图片识别</v-list-item-title>
                 </v-list-item-content>
               </v-list-item>
+                <!-- 设备列表功能已暂时禁用（需要 WebSocket 支持）
                 <v-list-item link href="#/device">
                     <v-list-item-action>
                         <v-icon>{{mdiDevices}}</v-icon>
@@ -30,6 +31,7 @@
                         <v-list-item-title>设备列表</v-list-item-title>
                     </v-list-item-content>
                 </v-list-item>
+                -->
                 <v-menu
                     offset-x
                     transition="slide-x-transition"
@@ -79,11 +81,11 @@
 
         <v-app-bar
             app
-            color="primary"
+            :color="$vuetify.theme.dark ? 'grey darken-4' : 'primary'"
             dark
         >
             <v-app-bar-nav-icon @click.stop="drawer = !drawer" />
-            <v-toolbar-title>云剪贴板<span class="d-none d-sm-inline" v-if="$root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="navigator.clipboard.writeText($root.room).then(() => $toast(`已复制房间名称：${$root.room}`).catch(err => $toast.error(`复制失败：${err}`)))">{{$root.room}}</abbr>）</span></v-toolbar-title>
+            <v-toolbar-title>云剪贴板<span class="d-none d-sm-inline" v-if="$root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
             <v-spacer></v-spacer>
             <v-tooltip left>
                 <template v-slot:activator="{ on }">
@@ -103,15 +105,11 @@
             </v-tooltip>
             <v-tooltip left>
                 <template v-slot:activator="{ on }">
-                    <v-btn icon v-on="on" @click="if (!$root.websocket && !$root.websocketConnecting) {$root.retry = 0; $root.connect();}">
-                        <v-icon v-if="$root.websocket">{{mdiLanConnect}}</v-icon>
-                        <v-icon v-else-if="$root.websocketConnecting">{{mdiLanPending}}</v-icon>
-                        <v-icon v-else>{{mdiLanDisconnect}}</v-icon>
+                    <v-btn icon v-on="on" @click="$root.refresh()" :loading="$root.loading">
+                        <v-icon>{{mdiRefresh}}</v-icon>
                     </v-btn>
                 </template>
-                <span v-if="$root.websocket">已连接</span>
-                <span v-else-if="$root.websocketConnecting">连接中</span>
-                <span v-else>未连接，点击重连</span>
+                <span>刷新列表</span>
             </v-tooltip>
         </v-app-bar>
 
@@ -141,7 +139,14 @@
                 <v-card-title class="headline">需要认证</v-card-title>
                 <v-card-text>
                     <p>这个剪贴板服务并不是公开的，请输入密码以继续连接。</p>
-                    <v-text-field v-model="$root.authCode" label="密码"></v-text-field>
+                    <v-text-field
+                        v-model="$root.authCode"
+                        label="密码"
+                        :type="showPassword ? 'text' : 'password'"
+                        :append-icon="showPassword ? mdiEye : mdiEyeOff"
+                        @click:append="showPassword = !showPassword"
+                        autocomplete="current-password"
+                    ></v-text-field>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer></v-spacer>
@@ -224,15 +229,17 @@ import {
   mdiContentPaste,
   mdiDevices,
   mdiInformation,
-  mdiLanConnect,
-  mdiLanDisconnect,
-  mdiLanPending,
+  mdiRefresh,
   mdiBrightness4,
   mdiBulletinBoard,
   mdiDiceMultiple,
   mdiPalette,
-  mdiNotificationClearAll, mdiOcr,
+  mdiNotificationClearAll,
+  mdiOcr,
+  mdiEye,
+  mdiEyeOff,
 } from '@mdi/js';
+import { copyToClipboard } from '@/util.js';
 
 export default {
     data() {
@@ -240,22 +247,30 @@ export default {
             drawer: false,
             colorDialog: false,
             clearAllDialog: false,
+            showPassword: false,
             mdiContentPaste,
             mdiDevices,
             mdiOcr,
             mdiInformation,
-            mdiLanConnect,
-            mdiLanDisconnect,
-            mdiLanPending,
+            mdiRefresh,
             mdiBrightness4,
             mdiBulletinBoard,
             mdiDiceMultiple,
             mdiPalette,
             mdiNotificationClearAll,
-            navigator,
+            mdiEye,
+            mdiEyeOff,
         };
     },
     methods: {
+        async copyRoomName() {
+            const result = await copyToClipboard(this.$root.room);
+            if (result.success) {
+                this.$toast(`已复制房间名称：${this.$root.room}`);
+            } else {
+                this.$toast.error('复制失败');
+            }
+        },
         async clearAll() {
             try {
                 const files = this.$root.received.filter(e => e.type === 'file');
