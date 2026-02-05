@@ -148,6 +148,7 @@ export default {
                 params: new URLSearchParams([['room', this.$root.room]]),
             }).then(() => {
                 this.$toast('已删除文本消息');
+                this.$root.refresh();
             }).catch(error => {
                 if (error.response && error.response.data.msg) {
                     this.$toast(`消息删除失败：${error.response.data.msg}`);

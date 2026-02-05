@@ -22,8 +22,6 @@ class UploadedFile {
         this.path = path.join(storageFolder, this.uuid);
         /** @type {Number} */
         this.uploadTime = Date.now() / 1000;
-        /** @type {Number} */
-        this.expireTime = undefined;
         this.writePromise = Promise.resolve();
         this.uploadedSize = 0;
         this.fileHandle = null; // 用于存储文件句柄
@@ -76,7 +74,6 @@ class UploadedFile {
         this.writePromise = this.writePromise.then(() => {
             console.log('消耗时间:', Date.now() / 1000 - this.uploadTime)
             this.uploadTime = Math.round(Date.now() / 1000);
-            this.expireTime = this.uploadTime + config.file.expire;
         });
         return this.writePromise;
     }
@@ -89,23 +86,6 @@ class UploadedFile {
 
 /** @type {Map<String, UploadedFile>} */
 const uploadFileMap = new Map;
-
-setInterval(() => {
-    /** @type {String[]} */
-    const toRemove = [];
-    const currentTime = Math.round(Date.now() / 1000);
-    uploadFileMap.forEach((v, k) => {
-        if (v.expireTime < currentTime) toRemove.push(k);
-    });
-    toRemove.forEach(e => {
-        try {
-            uploadFileMap.get(e).remove();
-            uploadFileMap.delete(e);
-        } catch (err) {
-
-        }
-    });
-}, 1800000);
 
 export {
     UploadedFile,

@@ -62,7 +62,7 @@ export default {
             this.$root.config = {
                 version: 'local',
                 text: { limit: 100000 },
-                file: { limit: 10737418240, chunk: 2097152, expire: 86400 }
+                file: { limit: 10737418240, chunk: 2097152 }
             };
 
             try {

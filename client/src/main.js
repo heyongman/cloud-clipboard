@@ -35,7 +35,6 @@ const app = new Vue({
                     limit: 0,
                 },
                 file: {
-                    expire: 0,
                     chunk: 0,
                     limit: 0,
                 },

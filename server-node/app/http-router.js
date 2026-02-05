@@ -18,14 +18,19 @@ import {
 const historyPath = config.server.historyFile || path.join(process.cwd(), 'history.json');
 
 const saveHistory = () => fs.promises.writeFile(historyPath, JSON.stringify({
-    file: Array.from(uploadFileMap.values()).filter(e => e.expireTime > Date.now() / 1e3).map(e => ({
+    file: Array.from(uploadFileMap.values()).map(e => ({
         name: e.name,
         uuid: e.uuid,
         size: e.size,
         uploadTime: e.uploadTime,
-        expireTime: e.expireTime,
     })),
-    receive: messageQueue.queue.filter(e => e.event === 'receive').filter(e => e.data.type !== 'file' || e.data.expire > Date.now() / 1e3).map(e => e.data),
+    receive: messageQueue.queue
+        .filter(e => e.event === 'receive')
+        .map(e => {
+            const data = { ...e.data };
+            delete data.expire;
+            return data;
+        }),
 }));
 
 /** @type {import('koa').Middleware} */
@@ -232,7 +237,6 @@ router.post(
                     name: file.name,
                     size: file.size,
                     cache: file.uuid,
-                    expire: file.expireTime,
                 },
             };
             if (file.size <= 33554432) {
@@ -356,7 +360,6 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
                 name: file.name,
                 size: file.size,
                 cache: file.uuid,
-                expire: file.expireTime,
             },
         };
         if (file.size <= 33554432) {
@@ -378,7 +381,7 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
 
 router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'], authMiddleware, async ctx => {
     const file = uploadFileMap.get(ctx.params.uuid);
-    if (!file || Date.now() / 1000 > file.expireTime || !fs.existsSync(file.path)) {
+    if (!file || !fs.existsSync(file.path)) {
         return ctx.status = 404;
     }
     ctx.attachment(file.name, {type: 'inline'});
@@ -464,7 +467,6 @@ if (fs.existsSync(historyPath)) {
      *      uuid: String,
      *      size: Number,
      *      uploadTime: Number,
-     *      expireTime: Number,
      *  }[],
      *  receive: ({
      *      type: 'text',
@@ -476,29 +478,27 @@ if (fs.existsSync(historyPath)) {
      *      name: String,
      *      size: Number,
      *      cache: String,
-     *      expire: Number,
      *  })[],
      * }}
      */
     const history = JSON.parse(fs.readFileSync(historyPath, {encoding: 'utf-8'}));
-    const currentTime = Math.round(Date.now() / 1000);
-    history.file.forEach(e => {
+    (history.file || []).forEach(e => {
         if (!fs.existsSync(path.join(storageFolder, e.uuid))) return;
-        if (e.expireTime < currentTime) return fs.rmSync(path.join(storageFolder, e.uuid));
         const f = new UploadedFile(e.name);
         f.uuid = e.uuid;
         f.path = path.join(storageFolder, f.uuid);
         f.size = e.size;
         f.uploadTime = e.uploadTime;
-        f.expireTime = e.expireTime;
         uploadFileMap.set(e.uuid, f);
     });
-    history.receive.forEach(e => {
+    (history.receive || []).forEach(e => {
         if (e.type === 'file' && !uploadFileMap.has(e.cache)) return;
+        const data = { ...e };
+        delete data.expire;
         messageQueue.enqueue({
             event: 'receive',
             data: {
-                ...e,
+                ...data,
                 id: messageQueue.counter,
             },
         });

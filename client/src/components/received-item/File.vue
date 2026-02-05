@@ -192,6 +192,7 @@ export default {
             }).then(() => {
                 this.$http.delete(`file/${this.meta.cache}`).then(() => {
                     this.$toast(`已删除文件 ${this.meta.name}`);
+                    this.$root.refresh();
                 }).catch(error => {
                     if (error.response && error.response.data.msg) {
                         this.$toast(`文件删除失败：${error.response.data.msg}`);

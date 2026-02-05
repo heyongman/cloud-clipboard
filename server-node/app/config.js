@@ -25,7 +25,6 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             limit: 4096,
         },
         file: {
-            expire: 3600,
             chunk: 2097152,
             limit: 268435456,
         },
@@ -51,7 +50,6 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      limit: Number,
  *  },
  *  file: {
- *      expire: Number,
  *      chunk: Number,
  *      limit: Number,
  *  },
@@ -70,6 +68,9 @@ if (config.server.auth === true) {
 }
 if (config.server.auth) {
     config.server.auth = config.server.auth.toString();
+}
+if (config.file && config.file.expire !== undefined) {
+    delete config.file.expire;
 }
 
 export default config;
