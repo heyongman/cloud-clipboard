@@ -12,7 +12,6 @@ import {
 } from './uploaded-file.js';
 import {
     writeJSON,
-    wsBoardcast,
     createThumbnail,
 } from './util.js';
 
@@ -50,7 +49,6 @@ const router = new KoaRouter({
 
 router.get('/server', async ctx => {
     ctx.body = {
-        'server': `ws://${ctx.request.host}${config.server.prefix}/push`,
         'auth': !!config.server.auth,
     };
 });
@@ -177,9 +175,6 @@ router.post(
             },
         };
         messageQueue.enqueue(message);
-        /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-        const app = ctx.app;
-        wsBoardcast(app.ws, JSON.stringify(message), ctx.query.room || '');
         writeJSON(ctx, 200, {
             url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
         });
@@ -193,39 +188,12 @@ router.delete('/revoke/:id(\\d+)', authMiddleware, async ctx => {
         return writeJSON(ctx, 400, {}, '不存在的消息 ID');
     }
     messageQueue.queue.splice(messageQueue.queue.findIndex(e => e.data.id === id), 1);
-    /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-    const app = ctx.app;
-    wsBoardcast(
-        app.ws,
-        JSON.stringify({
-            event: 'revoke',
-            data: {
-                id,
-                room: ctx.query.room || '',
-            },
-        }),
-        ctx.query.room || '',
-    );
     writeJSON(ctx);
     saveHistory();
 });
 
 router.delete('/revoke/all', authMiddleware, async ctx => {
-    const revoked = messageQueue.queue.filter(e => e.data.room === (ctx.query.room || ''));
     messageQueue.queue = messageQueue.queue.filter(e => e.data.room !== (ctx.query.room || ''));
-    /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-    const app = ctx.app;
-    revoked.forEach(e => wsBoardcast(
-        app.ws,
-        JSON.stringify({
-            event: 'revoke',
-            data: {
-                id: e.data.id,
-                room: ctx.query.room || '',
-            },
-        }),
-        ctx.query.room || '',
-    ));
     writeJSON(ctx);
     saveHistory();
 });
@@ -275,9 +243,6 @@ router.post(
             message.data.id = messageQueue.counter;
             messageQueue.enqueue(message);
 
-            /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-            const app = ctx.app;
-            wsBoardcast(app.ws, JSON.stringify(message), ctx.query.room || '');
             writeJSON(ctx, 200, {
                 url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
             });
@@ -402,9 +367,6 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
         message.data.id = messageQueue.counter;
         messageQueue.enqueue(message);
 
-        /** @type {koaWebsocket.App<Koa.DefaultState, Koa.DefaultContext>} */
-        const app = ctx.app;
-        wsBoardcast(app.ws, JSON.stringify(message), ctx.query.room || '');
         writeJSON(ctx, 200, {
             url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
         });
@@ -414,7 +376,7 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
     }
 });
 
-router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'], async ctx => {
+router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'], authMiddleware, async ctx => {
     const file = uploadFileMap.get(ctx.params.uuid);
     if (!file || Date.now() / 1000 > file.expireTime || !fs.existsSync(file.path)) {
         return ctx.status = 404;

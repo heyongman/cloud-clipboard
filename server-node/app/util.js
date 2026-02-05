@@ -1,5 +1,4 @@
 import Koa from 'koa';
-import koaWebsocket from 'koa-websocket';
 import sharp from 'sharp';
 
 /**
@@ -16,13 +15,6 @@ export const writeJSON = (ctx, status = 200, result = {}, msg = '') => {
         result,
     };
 };
-
-/**
- * @param {koaWebsocket.Server<any, any>} wsServer
- * @param {*} data
- * @param {String} [room]
- */
-export const wsBoardcast = (wsServer, data, room) => wsServer.server.clients.forEach(client => (client.room === undefined || client.room === room) && client.send(data));
 
 /**
  * @link https://github.com/garycourt/murmurhash-js/blob/master/murmurhash3_gc.js
