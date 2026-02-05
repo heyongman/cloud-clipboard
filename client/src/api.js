@@ -66,6 +66,16 @@ export default {
             };
 
             try {
+                // 先检查服务端是否需要认证
+                const serverInfo = await this.$http.get('server');
+                if (serverInfo.data.auth && !this.authCode) {
+                    // 需要认证但本地没有密码，直接弹出输入框
+                    this.connecting = false;
+                    this.authCodeDialog = true;
+                    this.$toast('请输入密码');
+                    return;
+                }
+
                 if (this.authCode) {
                     localStorage.setItem('auth', this.authCode);
                 }
@@ -85,7 +95,7 @@ export default {
                     this.authCode = '';
                     localStorage.removeItem('auth');
                     this.authCodeDialog = true;
-                    this.$toast.error('认证失败，请重新输入密码');
+                    this.$toast.error('认证失败，请输入密码');
                 } else {
                     this.$toast.error('加载失败，请点击刷新按钮重试');
                 }
@@ -102,11 +112,11 @@ export default {
         // 手动刷新
         async refresh() {
             if (this.loading) return;
-            this.$toast('正在刷新……', { timeout: 1000 });
+            // this.$toast('正在刷新……', { timeout: 1000 });
             try {
                 this.hasMore = true;
                 await this.fetchMessages();
-                this.$toast('刷新完成');
+                // this.$toast('刷新完成');
             } catch (error) {
                 this.$toast.error('刷新失败');
             }

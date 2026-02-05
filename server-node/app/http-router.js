@@ -454,7 +454,13 @@ router.get('/content/:id([0-9]+)', async ctx => {
                 .replaceAll('&#039;', '\'');
             break;
         case 'file':
-            ctx.redirect(`${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/file/${message.data.cache}/${encodeURIComponent(message.data.name)}`);
+            const file = uploadFileMap.get(ctx.params.uuid);
+            if (!file || !fs.existsSync(file.path)) {
+                return ctx.status = 404;
+            }
+            ctx.attachment(file.name, {type: 'inline'});
+            ctx.body = fs.createReadStream(file.path);
+            // ctx.redirect(`${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/file/${message.data.cache}/${encodeURIComponent(message.data.name)}`);
             break;
     }
 });
