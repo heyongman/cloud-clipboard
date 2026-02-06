@@ -55,7 +55,14 @@
                         </template>
                         <v-tooltip bottom>
                             <template v-slot:activator="{ on }">
-                                <v-btn v-on="on" icon color="grey" @click="copyLink">
+                                <v-btn
+                                    v-on="on"
+                                    icon
+                                    color="grey"
+                                    @click="copyLink"
+                                    :loading="sharingLoading"
+                                    :disabled="sharingLoading"
+                                >
                                     <v-icon>{{mdiLinkVariant}}</v-icon>
                                 </v-btn>
                             </template>
@@ -130,6 +137,7 @@ export default {
             loadedPreview: 0,
             expand: false,
             srcPreview: null,
+            sharingLoading: false,
             mdiContentCopy,
             mdiDownload,
             mdiClose,
@@ -178,12 +186,31 @@ export default {
             }
         },
         async copyLink() {
-            const url = `${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`;
-            const result = await copyToClipboard(url);
-            if (result.success) {
-                this.$toast('复制成功');
-            } else {
-                this.$toast.error('复制失败，请手动复制链接');
+            if (this.sharingLoading) return;
+
+            this.sharingLoading = true;
+            try {
+                const response = await this.$http.post(`share/${this.meta.id}`, null, {
+                    params: { room: this.$root.room },
+                });
+
+                const url = `${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`;
+                const result = await copyToClipboard(url);
+
+                if (result.success) {
+                    const hours = Math.max(1, Math.round((response.data.result.expireTime - Date.now()) / 3600000));
+                    this.$toast(`链接已复制，${hours}小时内有效`);
+                } else {
+                    this.$toast.error('链接已启用，但复制失败，请手动复制');
+                }
+            } catch (error) {
+                if (error.response?.data?.msg) {
+                    this.$toast.error(`分享失败：${error.response.data.msg}`);
+                } else {
+                    this.$toast.error('分享失败，请重试');
+                }
+            } finally {
+                this.sharingLoading = false;
             }
         },
         deleteItem() {

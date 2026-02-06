@@ -134,14 +134,8 @@ export default {
                 this.$toast.error('复制失败');
             }
         },
-        async copyLink() {
-            const url = `${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`;
-            const result = await copyToClipboard(url);
-            if (result.success) {
-                this.$toast('复制成功');
-            } else {
-                this.$toast.error('复制失败，请手动复制链接');
-            }
+        copyLink() {
+            this.$toast.error('文本消息不支持分享');
         },
         deleteItem() {
             this.$http.delete(`revoke/${this.meta.id}`, {

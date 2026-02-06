@@ -17,6 +17,10 @@ import {
 
 const historyPath = config.server.historyFile || path.join(process.cwd(), 'history.json');
 
+// 文件分享标记存储 Map<"room:messageId", expireTimestamp>
+const shareTokens = new Map();
+const SHARE_EXPIRE_MS = 12 * 60 * 60 * 1000; // 12小时
+
 const saveHistory = () => fs.promises.writeFile(historyPath, JSON.stringify({
     file: Array.from(uploadFileMap.values()).map(e => ({
         name: e.name,
@@ -186,6 +190,28 @@ router.post(
         saveHistory();
     }
 );
+
+// 标记文件为可分享（12小时有效期）
+router.post('/share/:id(\\d+)', authMiddleware, async ctx => {
+    const id = parseInt(ctx.params.id);
+    const room = ctx.query.room || '';
+
+    const message = messageQueue.queue.find(e => (
+        e.event === 'receive' &&
+        e.data.room === room &&
+        e.data.id === id &&
+        e.data.type === 'file'
+    ));
+
+    if (!message) {
+        return writeJSON(ctx, 404, {}, '文件不存在');
+    }
+
+    const expireTime = Date.now() + SHARE_EXPIRE_MS;
+    shareTokens.set(`${room}:${id}`, expireTime);
+
+    writeJSON(ctx, 200, { expireTime });
+});
 
 router.delete('/revoke/:id(\\d+)', authMiddleware, async ctx => {
     const id = parseInt(ctx.params.id);
@@ -429,7 +455,7 @@ router.delete('/file/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
     saveHistory();
 });
 
-// file消息不做权限校验，方便分享
+// file消息需要分享标记才能访问
 router.get('/content/:id([0-9]+)', async ctx => {
     const message = messageQueue.queue.find(e => (
         e.event === 'receive' &&
@@ -454,13 +480,22 @@ router.get('/content/:id([0-9]+)', async ctx => {
                 .replaceAll('&#039;', '\'');
             break;
         case 'file':
-            const file = uploadFileMap.get(ctx.params.uuid);
+            const shareKey = `${ctx.query.room || ''}:${ctx.params.id}`;
+            const expireTime = shareTokens.get(shareKey);
+
+            if (!expireTime || Date.now() > expireTime) {
+                if (expireTime) shareTokens.delete(shareKey);
+                ctx.status = 403;
+                ctx.body = { code: 403, msg: '链接已过期或未授权' };
+                return;
+            }
+
+            const file = uploadFileMap.get(message.data.cache);
             if (!file || !fs.existsSync(file.path)) {
                 return ctx.status = 404;
             }
             ctx.attachment(file.name, {type: 'inline'});
             ctx.body = fs.createReadStream(file.path);
-            // ctx.redirect(`${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/file/${message.data.cache}/${encodeURIComponent(message.data.name)}`);
             break;
     }
 });
@@ -510,5 +545,15 @@ if (fs.existsSync(historyPath)) {
         });
     });
 }
+
+// 定期清理过期的分享标记（每小时执行一次）
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, expireTime] of shareTokens) {
+        if (now > expireTime) {
+            shareTokens.delete(key);
+        }
+    }
+}, 60 * 60 * 1000);
 
 export default router;

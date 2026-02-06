@@ -89,14 +89,6 @@
             <v-spacer></v-spacer>
             <v-tooltip left>
                 <template v-slot:activator="{ on }">
-                    <v-btn icon v-on="on" @click="clearAllDialog = true">
-                        <v-icon>{{mdiNotificationClearAll}}</v-icon>
-                    </v-btn>
-                </template>
-                <span>清空剪贴板</span>
-            </v-tooltip>
-            <v-tooltip left>
-                <template v-slot:activator="{ on }">
                     <v-btn icon v-on="on" @click="$root.roomInput = $root.room; $root.roomDialog = true">
                         <v-icon>{{mdiBulletinBoard}}</v-icon>
                     </v-btn>
