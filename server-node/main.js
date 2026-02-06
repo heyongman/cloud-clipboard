@@ -76,7 +76,7 @@ console.log([
     `Cloud Clipboard ${process.env.VERSION}`,
     'https://github.com/TransparentLC/cloud-clipboard',
     '',
-    'Authorization code' + (config.server.auth ? `: ${config.server.auth}` : ' is disabled.'),
+    'Authorization code' + (config.server.auth ? `: **` : ' is disabled.'),
     ...(config.server.uds ? [`Server listening on UNIX domain socket ${config.server.uds} ...`] : []),
     'Server available at:',
     `http://${config.server.host}:${config.server.port}`,

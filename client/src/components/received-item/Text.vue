@@ -23,14 +23,6 @@
                         </v-tooltip>
                         <v-tooltip bottom>
                             <template v-slot:activator="{ on }">
-                                <v-btn v-on="on" icon color="grey" @click="copyLink">
-                                    <v-icon>{{mdiLinkVariant}}</v-icon>
-                                </v-btn>
-                            </template>
-                            <span>复制链接</span>
-                        </v-tooltip>
-                        <v-tooltip bottom>
-                            <template v-slot:activator="{ on }">
                                 <v-btn v-on="on" icon color="grey" @click="deleteItem">
                                     <v-icon>{{mdiClose}}</v-icon>
                                 </v-btn>
