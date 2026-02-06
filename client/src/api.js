@@ -66,9 +66,7 @@ export default {
             };
 
             try {
-                // 先检查服务端是否需要认证
-                const serverInfo = await this.$http.get('server');
-                if (serverInfo.data.auth && !this.authCode) {
+                if (!this.authCode) {
                     // 需要认证但本地没有密码，直接弹出输入框
                     this.connecting = false;
                     this.authCodeDialog = true;
