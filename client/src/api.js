@@ -58,26 +58,7 @@ export default {
                 timeout: 0,
             });
 
-            // 硬编码默认配置
-            this.$root.config = {
-                version: 'local',
-                text: { limit: 100000 },
-                file: { limit: 10737418240, chunk: 2097152 }
-            };
-
             try {
-                if (!this.authCode) {
-                    // 需要认证但本地没有密码，直接弹出输入框
-                    this.connecting = false;
-                    this.authCodeDialog = true;
-                    this.$toast('请输入密码');
-                    return;
-                }
-
-                if (this.authCode) {
-                    localStorage.setItem('auth', this.authCode);
-                }
-
                 // 获取消息列表
                 this.hasMore = true;
                 await this.fetchMessages();
@@ -130,6 +111,25 @@ export default {
         },
     },
     mounted() {
+        // 硬编码默认配置
+        this.$root.config = {
+            version: 'local',
+            text: { limit: 100000 },
+            file: { limit: 10737418240, chunk: 2097152 }
+        };
+
+        if (!this.authCode) {
+            // 需要认证但本地没有密码，直接弹出输入框
+            this.connecting = false;
+            this.authCodeDialog = true;
+            // this.$toast('请输入密码');
+            return;
+        }
+
+        if (this.authCode) {
+            localStorage.setItem('auth', this.authCode);
+        }
+
         this.connect();
     },
     beforeDestroy() {
