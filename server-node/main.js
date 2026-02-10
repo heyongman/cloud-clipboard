@@ -15,6 +15,7 @@ import httpRouter from './app/http-router.js';
 process.env.VERSION = `node-${JSON.parse(fs.readFileSync(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'package.json'))).version}`;
 
 const app = new Koa();
+app.proxy = true;
 app.use(proxy('/ocr', {
     target: 'https://aip.baidubce.com',
     changeOrigin: true,

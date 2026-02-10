@@ -185,7 +185,7 @@ router.post(
         };
         messageQueue.enqueue(message);
         writeJSON(ctx, 200, {
-            url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
+            url: `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
         });
         saveHistory();
     }
@@ -204,7 +204,7 @@ router.post('/share/:id(\\d+)', authMiddleware, async ctx => {
     ));
 
     if (!message) {
-        return writeJSON(ctx, 404, {}, '文件不存在');
+        return writeJSON(ctx, 404, {}, 'file not found');
     }
 
     const expireTime = Date.now() + SHARE_EXPIRE_MS;
@@ -274,7 +274,7 @@ router.post(
             messageQueue.enqueue(message);
 
             writeJSON(ctx, 200, {
-                url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
+                url: `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
             });
             saveHistory();
         } catch (error) {
@@ -397,7 +397,7 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
         messageQueue.enqueue(message);
 
         writeJSON(ctx, 200, {
-            url: `${ctx.request.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
+            url: `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
         });
         saveHistory();
     } catch (error) {
@@ -411,37 +411,74 @@ router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'],
         return ctx.status = 404;
     }
     ctx.attachment(file.name, {type: 'inline'});
+    ctx.compress = false;
+    ctx.set('Cache-Control', 'no-transform');
     const fileSize = (await fs.promises.stat(file.path)).size;
-    // https://github.com/xtx1130/koa-partial-content/blob/master/index.js
-    if (ctx.header.range && file.name.match(/\.(mp3|mp4|flv|webm|ogv|mpg|mpg|wav|ogg|opus|m4a|flac)$/gi)) {
-        try {
-            const m = /^bytes=(\d+)-(\d*)$/.exec(ctx.request.header.range || 'bytes=0-');
-            if (!m) throw new Error;
-            const rangeStart = parseInt(m[1]);
-            const rangeEnd = parseInt(m[2] || (fileSize - 1));
-            ctx.set('Accept-Range', 'bytes');
-            if (rangeEnd > fileSize - 1 || rangeEnd > fileSize - 1) {
-                throw new Error;
-            } else {
-                ctx.status = 206;
-                ctx.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${fileSize}`);
-                await new Promise(resolve => {
-                    const rs = fs.createReadStream(file.path, {
-                        start: rangeStart,
-                        end: rangeEnd,
-                    });
-                    rs.on('open', () => rs.pipe(ctx.res));
-                    rs.on('end', resolve);
-                    rs.on('error', () => resolve(ctx.throw(500)));
-                });
-            }
-        } catch (err) {
-            ctx.throw(416);
-            ctx.set('Content-Range', `bytes */${fileSize}`);
-        }
-    } else {
+    ctx.set('Accept-Ranges', 'bytes');
+
+    const rangeHeader = ctx.get('range');
+    if (!rangeHeader) {
+        ctx.set('Content-Length', `${fileSize}`);
         ctx.body = fs.createReadStream(file.path);
+        return;
     }
+
+    if (fileSize === 0) {
+        ctx.status = 416;
+        ctx.set('Content-Range', 'bytes */0');
+        return;
+    }
+
+    const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+    if (!rangeMatch) {
+        ctx.status = 416;
+        ctx.set('Content-Range', `bytes */${fileSize}`);
+        return;
+    }
+
+    let rangeStart = rangeMatch[1] === '' ? null : parseInt(rangeMatch[1], 10);
+    let rangeEnd = rangeMatch[2] === '' ? null : parseInt(rangeMatch[2], 10);
+
+    if (rangeStart === null && rangeEnd === null) {
+        ctx.status = 416;
+        ctx.set('Content-Range', `bytes */${fileSize}`);
+        return;
+    }
+
+    if (rangeStart === null) {
+        const suffixLength = rangeEnd;
+        if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+            ctx.status = 416;
+            ctx.set('Content-Range', `bytes */${fileSize}`);
+            return;
+        }
+        rangeStart = Math.max(fileSize - suffixLength, 0);
+        rangeEnd = fileSize - 1;
+    } else {
+        if (!Number.isInteger(rangeStart) || rangeStart < 0 || rangeStart >= fileSize) {
+            ctx.status = 416;
+            ctx.set('Content-Range', `bytes */${fileSize}`);
+            return;
+        }
+        if (rangeEnd === null) {
+            rangeEnd = fileSize - 1;
+        } else if (!Number.isInteger(rangeEnd) || rangeEnd < rangeStart) {
+            ctx.status = 416;
+            ctx.set('Content-Range', `bytes */${fileSize}`);
+            return;
+        } else {
+            rangeEnd = Math.min(rangeEnd, fileSize - 1);
+        }
+    }
+
+    const contentLength = rangeEnd - rangeStart + 1;
+    ctx.status = 206;
+    ctx.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${fileSize}`);
+    ctx.set('Content-Length', `${contentLength}`);
+    ctx.body = fs.createReadStream(file.path, {
+        start: rangeStart,
+        end: rangeEnd,
+    });
 });
 
 router.delete('/file/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
@@ -494,8 +531,77 @@ router.get('/content/:id([0-9]+)', async ctx => {
             if (!file || !fs.existsSync(file.path)) {
                 return ctx.status = 404;
             }
-            ctx.attachment(file.name, {type: 'inline'});
-            ctx.body = fs.createReadStream(file.path);
+            ctx.type = path.extname(file.name) || 'application/octet-stream';
+            ctx.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+            ctx.compress = false;
+            ctx.set('Cache-Control', 'no-transform');
+
+            const fileSize = (await fs.promises.stat(file.path)).size;
+            ctx.set('Accept-Ranges', 'bytes');
+
+            const rangeHeader = ctx.get('range');
+            if (!rangeHeader) {
+                ctx.set('Content-Length', `${fileSize}`);
+                ctx.body = fs.createReadStream(file.path);
+                break;
+            }
+
+            if (fileSize === 0) {
+                ctx.status = 416;
+                ctx.set('Content-Range', 'bytes */0');
+                break;
+            }
+
+            const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+            if (!rangeMatch) {
+                ctx.status = 416;
+                ctx.set('Content-Range', `bytes */${fileSize}`);
+                break;
+            }
+
+            let rangeStart = rangeMatch[1] === '' ? null : parseInt(rangeMatch[1], 10);
+            let rangeEnd = rangeMatch[2] === '' ? null : parseInt(rangeMatch[2], 10);
+
+            if (rangeStart === null && rangeEnd === null) {
+                ctx.status = 416;
+                ctx.set('Content-Range', `bytes */${fileSize}`);
+                break;
+            }
+
+            if (rangeStart === null) {
+                const suffixLength = rangeEnd;
+                if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+                    ctx.status = 416;
+                    ctx.set('Content-Range', `bytes */${fileSize}`);
+                    break;
+                }
+                rangeStart = Math.max(fileSize - suffixLength, 0);
+                rangeEnd = fileSize - 1;
+            } else {
+                if (!Number.isInteger(rangeStart) || rangeStart < 0 || rangeStart >= fileSize) {
+                    ctx.status = 416;
+                    ctx.set('Content-Range', `bytes */${fileSize}`);
+                    break;
+                }
+                if (rangeEnd === null) {
+                    rangeEnd = fileSize - 1;
+                } else if (!Number.isInteger(rangeEnd) || rangeEnd < rangeStart) {
+                    ctx.status = 416;
+                    ctx.set('Content-Range', `bytes */${fileSize}`);
+                    break;
+                } else {
+                    rangeEnd = Math.min(rangeEnd, fileSize - 1);
+                }
+            }
+
+            const contentLength = rangeEnd - rangeStart + 1;
+            ctx.status = 206;
+            ctx.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${fileSize}`);
+            ctx.set('Content-Length', `${contentLength}`);
+            ctx.body = fs.createReadStream(file.path, {
+                start: rangeStart,
+                end: rangeEnd,
+            });
             break;
     }
 });

@@ -30,8 +30,9 @@
                                     v-on="on"
                                     icon
                                     color="grey"
-                                    :href="`file/${meta.cache}/${encodeURIComponent(meta.name)}`"
-                                    :download="meta.name"
+                                    :loading="downloading"
+                                    :disabled="downloading"
+                                    @click="downloadFile"
                                 >
                                     <v-icon>{{mdiDownload}}</v-icon>
                                 </v-btn>
@@ -138,6 +139,7 @@ export default {
             expand: false,
             srcPreview: null,
             sharingLoading: false,
+            downloading: false,
             mdiContentCopy,
             mdiDownload,
             mdiClose,
@@ -158,7 +160,36 @@ export default {
         removeFromList() {
             this.$root.received = this.$root.received.filter(item => item.id !== this.meta.id);
         },
-        previewFile() {
+
+        async downloadFile() {
+            if (this.downloading) return;
+
+            this.downloading = true;
+            try {
+                await this.$http.post(`share/${this.meta.id}`, null, {
+                    params: { room: this.$root.room },
+                });
+
+                const roomQuery = this.$root.room ? `?room=${encodeURIComponent(this.$root.room)}` : '';
+                const url = `${location.protocol}//${location.host}/content/${this.meta.id}${roomQuery}`;
+
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = this.meta.name;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } catch (error) {
+                if (error.response && error.response.data.msg) {
+                    this.$toast(`File download failed: ${error.response.data.msg}`);
+                } else {
+                    this.$toast('File download failed');
+                }
+            } finally {
+                this.downloading = false;
+            }
+        },
+        async previewFile() {
             if (this.expand) {
                 this.expand = false;
                 return;
@@ -168,7 +199,23 @@ export default {
             }
             this.expand = true;
             if (this.isPreviewableVideo || this.isPreviewableAudio) {
-                this.srcPreview = `file/${this.meta.cache}/${encodeURIComponent(this.meta.name)}`;
+                this.loadingPreview = true;
+                try {
+                    await this.$http.post(`share/${this.meta.id}`, null, {
+                        params: { room: this.$root.room },
+                    });
+                    const roomQuery = this.$root.room ? `?room=${encodeURIComponent(this.$root.room)}` : '';
+                    this.srcPreview = `${location.protocol}//${location.host}/content/${this.meta.id}${roomQuery}`;
+                } catch (error) {
+                    if (error.response && error.response.data.msg) {
+                        this.$toast(`Preview failed: ${error.response.data.msg}`);
+                    } else {
+                        this.$toast('Preview failed');
+                    }
+                    this.expand = false;
+                } finally {
+                    this.loadingPreview = false;
+                }
             } else {
                 this.loadingPreview = true;
                 this.loadedPreview = 0;
@@ -179,9 +226,9 @@ export default {
                     this.srcPreview = URL.createObjectURL(new Blob([response.data]));
                 }).catch(error => {
                     if (error.response && error.response.data.msg) {
-                        this.$toast(`文件获取失败：${error.response.data.msg}`);
+                        this.$toast(`Preview failed: ${error.response.data.msg}`);
                     } else {
-                        this.$toast('文件获取失败');
+                        this.$toast('Preview failed');
                     }
                 }).finally(() => {
                     this.loadingPreview = false;
