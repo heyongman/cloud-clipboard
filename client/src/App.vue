@@ -85,7 +85,7 @@
             dark
         >
             <v-app-bar-nav-icon @click.stop="drawer = !drawer" />
-            <v-toolbar-title>云剪贴板<span class="d-none d-sm-inline" v-if="$root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
+            <v-toolbar-title>剪贴板<span class="d-none d-sm-inline" v-if="$root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
             <v-spacer></v-spacer>
             <v-tooltip left>
                 <template v-slot:activator="{ on }">

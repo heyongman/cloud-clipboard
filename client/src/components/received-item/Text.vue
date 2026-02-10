@@ -118,6 +118,9 @@ export default {
         },
     },
     methods: {
+        removeFromList() {
+            this.$root.received = this.$root.received.filter(item => item.id !== this.meta.id);
+        },
         async copyText() {
             const result = await copyToClipboard(this.decodedContent);
             if (result.success) {
@@ -133,8 +136,8 @@ export default {
             this.$http.delete(`revoke/${this.meta.id}`, {
                 params: new URLSearchParams([['room', this.$root.room]]),
             }).then(() => {
+                this.removeFromList();
                 this.$toast('已删除文本消息');
-                this.$root.refresh();
             }).catch(error => {
                 if (error.response && error.response.data.msg) {
                     this.$toast(`消息删除失败：${error.response.data.msg}`);

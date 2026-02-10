@@ -297,3 +297,61 @@ Forbidden
 $ curl -H "Authorization: Bearer xxxx" http://localhost:9501/content/1
 foobar
 ```
+
+```
+flush ruleset
+
+table inet filter {
+  # 定义公共端口集合（允许外部访问）
+  set public_tcp_ports {
+    type inet_service
+    elements = { 8022, 8888, 8443 }
+  }
+
+  # 定义局域网私有端口集合（只允许 192.168.5.x 访问）
+  set lan_tcp_ports {
+    type inet_service
+    elements = { 7890, 9090, 8123 }
+  }
+
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    # 允许本机回环
+    iifname "lo" accept
+
+    # 允许已建立/相关连接
+    ct state established,related accept
+    ct state invalid drop
+
+    # IPv6 必要的 ICMPv6
+    ip6 nexthdr ipv6-icmp accept
+
+    # DHCPv6 (保持你原有的配置)
+    udp dport 546 ip6 saddr fe80::/10 accept
+    
+    # ---------------------------------------------------------
+    # 规则 1: 允许所有人访问公共端口
+    # ---------------------------------------------------------
+    tcp dport @public_tcp_ports ct state new accept
+
+    # ---------------------------------------------------------
+    # 规则 2: 只允许局域网 IP (192.168.5.0/24) 访问私有端口
+    # ---------------------------------------------------------
+    # ip saddr 指定源IP段，根据你的网关 192.168.5.1，掩码通常是 24
+    ip saddr 192.168.5.0/24 tcp dport @lan_tcp_ports ct state new accept
+
+    # 可选：记录被丢弃的包
+    # limit rate 5/second burst 20 packets log prefix "nft drop: " flags all counter drop
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}
+
+```

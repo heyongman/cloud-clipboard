@@ -8,7 +8,7 @@
                     <v-img
                         v-if="meta.thumbnail"
                         :src="meta.thumbnail"
-                        class="mr-3 flex-grow-0 hidden-sm-and-down"
+                        class="mr-3 flex-grow-0"
                         width="2.5rem"
                         height="2.5rem"
                         style="border-radius: 3px"
@@ -155,6 +155,9 @@ export default {
         },
     },
     methods: {
+        removeFromList() {
+            this.$root.received = this.$root.received.filter(item => item.id !== this.meta.id);
+        },
         previewFile() {
             if (this.expand) {
                 this.expand = false;
@@ -217,9 +220,9 @@ export default {
             this.$http.delete(`revoke/${this.meta.id}`, {
                 params: new URLSearchParams([['room', this.$root.room]]),
             }).then(() => {
+                this.removeFromList();
                 this.$http.delete(`file/${this.meta.cache}`).then(() => {
                     this.$toast(`已删除文件 ${this.meta.name}`);
-                    this.$root.refresh();
                 }).catch(error => {
                     if (error.response && error.response.data.msg) {
                         this.$toast(`文件删除失败：${error.response.data.msg}`);

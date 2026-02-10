@@ -3,7 +3,6 @@ import VueRouter from 'vue-router';
 import Home from '@/views/Home.vue';
 import Ocr from '@/views/Ocr.vue';
 import Device from '@/views/Device.vue';
-import About from '@/views/About.vue';
 
 Vue.use(VueRouter);
 
@@ -26,13 +25,6 @@ const router = new VueRouter({
         {
             path: '/device',
             component: Device,
-            meta: {
-                keepAlive: true,
-            },
-        },
-        {
-            path: '/about',
-            component: About,
             meta: {
                 keepAlive: true,
             },
