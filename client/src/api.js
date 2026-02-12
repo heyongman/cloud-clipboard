@@ -1,15 +1,20 @@
-// HTTP API 模块
+﻿const AUTH_STORAGE_KEY = 'auth';
+const MESSAGE_PAGE_SIZE = 10;
+
+const createDefaultConfig = () => ({
+    version: 'local',
+    text: { limit: 100000 },
+    file: { limit: 10737418240, chunk: 2097152 },
+});
+
 export default {
     data() {
         return {
-            // 保留原有的认证和房间相关状态
-            authCode: localStorage.getItem('auth') || '',
+            authCode: localStorage.getItem(AUTH_STORAGE_KEY) || '',
             authCodeDialog: false,
             room: this.$router.currentRoute.query.room || '',
             roomInput: '',
             roomDialog: false,
-
-            // HTTP 相关状态
             loading: false,
             hasMore: true,
             connected: false,
@@ -23,21 +28,29 @@ export default {
         },
     },
     methods: {
-        // 获取消息列表（支持分页）
+        persistAuthCode() {
+            if (!this.authCode) return;
+            if (localStorage.getItem(AUTH_STORAGE_KEY) === this.authCode) return;
+            localStorage.setItem(AUTH_STORAGE_KEY, this.authCode);
+        },
+
         async fetchMessages(beforeId = null) {
             if (this.loading) return;
+
             this.loading = true;
             try {
-                const params = { room: this.room, limit: 10 };
-                if (beforeId) params.beforeId = beforeId;
-                const response = await this.$http.get('messages', { params });
-                const { items, hasMore } = response.data.result;
+                const { data: { result } } = await this.$http.get('messages', {
+                    params: {
+                        room: this.room,
+                        limit: MESSAGE_PAGE_SIZE,
+                        ...(beforeId ? { beforeId } : {}),
+                    },
+                });
+                const { items = [], hasMore = false } = result || {};
 
                 if (beforeId) {
-                    // 加载更多（追加到末尾）
                     this.$root.received.push(...items);
                 } else {
-                    // 首次加载（替换）
                     this.$root.received = items;
                 }
                 this.hasMore = hasMore;
@@ -49,8 +62,20 @@ export default {
             }
         },
 
-        // 连接（初始化）
+        handleAuthError() {
+            this.authCode = '';
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+            this.authCodeDialog = true;
+            this.$toast.error('认证失败，请输入密码');
+        },
+
         async connect() {
+            if (this.connecting) return;
+            if (!this.authCode) {
+                this.authCodeDialog = true;
+                return;
+            }
+
             this.connecting = true;
             this.$toast('正在加载数据……', {
                 showClose: false,
@@ -58,52 +83,44 @@ export default {
                 timeout: 0,
             });
 
+            this.hasMore = true;
             try {
-                // 获取消息列表
-                this.hasMore = true;
                 await this.fetchMessages();
-
                 this.connected = true;
-                this.connecting = false;
+                this.persistAuthCode();
                 this.$toast('加载完成');
             } catch (error) {
-                this.connecting = false;
                 this.connected = false;
-                if (error.response && error.response.status === 403) {
-                    // 认证失败
-                    this.authCode = '';
-                    localStorage.removeItem('auth');
-                    this.authCodeDialog = true;
-                    this.$toast.error('认证失败，请输入密码');
+                if (error?.response?.status === 403) {
+                    this.handleAuthError();
                 } else {
                     this.$toast.error('加载失败，请点击刷新按钮重试');
                 }
+            } finally {
+                this.connecting = false;
             }
         },
 
-        // 断开连接
         disconnect() {
             this.connected = false;
             this.$root.received = [];
             this.$root.device = [];
         },
 
-        // 手动刷新
         async refresh() {
             if (this.loading) return;
-            // this.$toast('正在刷新……', { timeout: 1000 });
+
+            this.hasMore = true;
             try {
-                this.hasMore = true;
                 await this.fetchMessages();
-                // this.$toast('刷新完成');
             } catch (error) {
                 this.$toast.error('刷新失败');
             }
         },
 
-        // 加载更多（触底加载）
         async loadMore() {
-            if (!this.hasMore || this.loading) return;
+            if (!this.hasMore || this.loading || !this.$root.received.length) return; 
+
             const lastId = this.$root.received[this.$root.received.length - 1]?.id;
             if (lastId) {
                 await this.fetchMessages(lastId);
@@ -111,28 +128,10 @@ export default {
         },
     },
     mounted() {
-        // 硬编码默认配置
-        this.$root.config = {
-            version: 'local',
-            text: { limit: 100000 },
-            file: { limit: 10737418240, chunk: 2097152 }
-        };
-
-        if (!this.authCode) {
-            // 需要认证但本地没有密码，直接弹出输入框
-            this.connecting = false;
-            this.authCodeDialog = true;
-            // this.$toast('请输入密码');
-            return;
-        }
-
-        if (this.authCode) {
-            localStorage.setItem('auth', this.authCode);
-        }
-
+        this.$root.config = createDefaultConfig();
         this.connect();
     },
     beforeDestroy() {
         this.disconnect();
     },
-}
+};

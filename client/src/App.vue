@@ -145,6 +145,7 @@
                     <v-btn
                         color="primary darken-1"
                         text
+                        :disabled="!$root.authCode || !$root.authCode.trim() || $root.connecting"
                         @click="
                             $root.authCodeDialog = false;
                             $root.connect();
