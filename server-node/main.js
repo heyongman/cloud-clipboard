@@ -13,13 +13,31 @@ import config from './app/config.js';
 import httpRouter from './app/http-router.js';
 
 process.env.VERSION = `node-${JSON.parse(fs.readFileSync(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'package.json'))).version}`;
+const staticDir = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'static');
+const staticIndexPath = path.join(staticDir, 'index.html');
+const prefix = config.server.prefix || '';
+const staticMountPath = `${prefix}/`;
+const ocrProxyPath = `${prefix}/ocr`;
+const apiFirstSegments = new Set([
+    'server',
+    'config',
+    'messages',
+    'text',
+    'share',
+    'revoke',
+    'upload',
+    'file',
+    'content',
+    'ocr',
+]);
+const withSearch = ctx => `${ctx.path}${ctx.search || ''}`;
 
 const app = new Koa();
 app.proxy = true;
-app.use(proxy('/ocr', {
+app.use(proxy(ocrProxyPath, {
     target: 'https://aip.baidubce.com',
     changeOrigin: true,
-    rewrite: path => path.replace(/^\/ocr/, ''),
+    rewrite: reqPath => reqPath.replace(new RegExp(`^${ocrProxyPath}`), ''),
     logs: true,
 }))
 app.use(async (ctx, next) => {
@@ -38,8 +56,47 @@ app.use(async (ctx, next) => {
 
     console.log(new Date().toISOString(), '-', remoteAddress, ctx.request.method, ctx.request.path, statusString, `${(performance.now() - startTime).toFixed(2)}ms`);
 })
+app.use(async (ctx, next) => {
+    if (prefix && ctx.method === 'GET' && ctx.path === '/') {
+        ctx.redirect(`${prefix}/`);
+        return;
+    }
+    if (prefix && (ctx.path === '/content' || ctx.path.startsWith('/content/'))) {
+        ctx.status = 307;
+        ctx.redirect(`${prefix}${withSearch(ctx)}`);
+        return;
+    }
+    if (prefix && (ctx.path === '/ocr' || ctx.path.startsWith('/ocr/'))) {
+        ctx.status = 307;
+        ctx.redirect(`${prefix}${withSearch(ctx)}`);
+        return;
+    }
+    if (prefix && ctx.method === 'GET' && ctx.path === prefix) {
+        ctx.redirect(`${prefix}/`);
+        return;
+    }
+
+    await next();
+
+    if (ctx.method !== 'GET' || ctx.status !== 404) {
+        return;
+    }
+    if (prefix && !ctx.path.startsWith(`${prefix}/`)) {
+        return;
+    }
+
+    const subPath = prefix ? ctx.path.slice(prefix.length + 1) : ctx.path.slice(1);
+    const firstSegment = subPath.split('/')[0];
+    if (apiFirstSegments.has(firstSegment)) {
+        return;
+    }
+
+    ctx.type = 'text/html; charset=utf-8';
+    ctx.body = fs.createReadStream(staticIndexPath);
+    ctx.status = 200;
+});
 app.use(koaCompress());
-app.use(koaMount(config.server.prefix + '/', koaStatic(path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'static'), {
+app.use(koaMount(staticMountPath, koaStatic(staticDir, {
     maxage: 30 * 24 * 60 * 60 * 1000,
 })));
 app.use(httpRouter.routes());

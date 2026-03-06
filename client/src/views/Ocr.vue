@@ -168,12 +168,25 @@ export default {
     }
   },
   computed: {
+    ocrBasePath() {
+      const routeSegmentSet = new Set(['home', 'ocr', 'device']);
+      const pathname = (window.location.pathname || '/').replace(/\/+$/, '');
+      if (!pathname || pathname === '/') {
+        return '';
+      }
+      const segments = pathname.split('/').filter(Boolean);
+      while (segments.length && routeSegmentSet.has(segments[segments.length - 1])) {
+        segments.pop();
+      }
+      return segments.length ? `/${segments.join('/')}` : '';
+    },
     apiUrls() {
+      const apiBase = `${this.ocrBasePath}/ocr`;
       return {
-        accurate_basic: '/ocr/rest/2.0/ocr/v1/accurate_basic',
-        accurate: '/ocr/rest/2.0/ocr/v1/accurate',
-        table: '/ocr/rest/2.0/ocr/v1/table',
-        handwriting: '/ocr/rest/2.0/ocr/v1/handwriting'
+        accurate_basic: `${apiBase}/rest/2.0/ocr/v1/accurate_basic`,
+        accurate: `${apiBase}/rest/2.0/ocr/v1/accurate`,
+        table: `${apiBase}/rest/2.0/ocr/v1/table`,
+        handwriting: `${apiBase}/rest/2.0/ocr/v1/handwriting`
       }
     }
   },
@@ -187,7 +200,7 @@ export default {
 
       try {
         const response = await fetch(
-            `/ocr/oauth/2.0/token?grant_type=client_credentials&client_id=${this.apiKey}&client_secret=${this.secretKey}`,
+            `${this.ocrBasePath}/ocr/oauth/2.0/token?grant_type=client_credentials&client_id=${this.apiKey}&client_secret=${this.secretKey}`,
             {
               method: 'POST',
               redirect: "error"

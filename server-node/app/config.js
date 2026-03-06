@@ -59,6 +59,8 @@ const config = JSON.parse(fs.readFileSync(process.argv[2] || defaultConfigPath))
 
 if (!config.server.prefix) {
     config.server.prefix = '';
+} else {
+    config.server.prefix = `/${config.server.prefix.toString().replace(/^\/+|\/+$/g, '')}`;
 }
 if (config.server.auth === true) {
     config.server.auth = '';
