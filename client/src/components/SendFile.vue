@@ -155,10 +155,10 @@ export default {
       },
 
       async uploadFile(file, fileIndex) {
-        const chunkSize = this.$root.config.file.chunk; // 假设从全局配置获取
+        const configChunkSize = this.$root.config.file.chunk;
 
         // 对于小文件，直接上传
-        if (file.size < chunkSize) {
+        if (file.size < configChunkSize) {
           const fd = new FormData();
           fd.set('file', file);
           return this.$http.postForm('upload', fd, {
@@ -174,12 +174,11 @@ export default {
           filename: file.name,
           size: file.size
         });
-        const { uuid } = response.data.result;
+        const { uuid, chunkSize = configChunkSize } = response.data.result;
 
         // 2. 创建所有分片的上传任务
         const chunksCount = Math.ceil(file.size / chunkSize);
         const uploadPromises = [];
-        let uploadedSize = 0;
 
         for (let i = 0; i < chunksCount; i++) {
           const start = i * chunkSize;

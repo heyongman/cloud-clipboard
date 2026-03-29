@@ -1,4 +1,4 @@
-﻿const AUTH_STORAGE_KEY = 'auth';
+const AUTH_STORAGE_KEY = 'auth';
 const MESSAGE_PAGE_SIZE = 10;
 
 const createDefaultConfig = () => ({
@@ -28,6 +28,13 @@ export default {
         },
     },
     methods: {
+        async fetchConfig() {
+            const { data: { result } } = await this.$http.get('config');
+            if (result) {
+                this.$root.config = result;
+            }
+        },
+
         persistAuthCode() {
             if (!this.authCode) return;
             if (localStorage.getItem(AUTH_STORAGE_KEY) === this.authCode) return;
@@ -85,6 +92,7 @@ export default {
 
             this.hasMore = true;
             try {
+                await this.fetchConfig();
                 await this.fetchMessages();
                 this.connected = true;
                 this.persistAuthCode();
@@ -112,6 +120,7 @@ export default {
 
             this.hasMore = true;
             try {
+                await this.fetchConfig();
                 await this.fetchMessages();
             } catch (error) {
                 this.$toast.error('刷新失败');
@@ -128,7 +137,7 @@ export default {
         },
     },
     mounted() {
-        this.$root.config = createDefaultConfig();
+        // this.$root.config = createDefaultConfig();
         this.connect();
     },
     beforeDestroy() {

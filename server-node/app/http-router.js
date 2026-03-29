@@ -324,6 +324,11 @@ router.post('/upload/chunk/:uuid([0-9a-f]{32})/:chunkIndex(\\d+)', authMiddlewar
         }
 
         const offset = parseInt(chunkIndex, 10) * config.file.chunk;
+        const expectedChunkSize = Math.min(config.file.chunk, file.size - offset);
+
+        if (offset < 0 || offset >= file.size) {
+            throw new Error('分片索引超出范围');
+        }
 
         // 使用 Promise 包装流式处理，以便在 async/await 中使用
         await new Promise((resolve, reject) => {
@@ -333,16 +338,26 @@ router.post('/upload/chunk/:uuid([0-9a-f]{32})/:chunkIndex(\\d+)', authMiddlewar
                 flags: 'r+',
                 start: offset
             });
+            let receivedBytes = 0;
+
+            ctx.req.on('data', chunk => {
+                receivedBytes += chunk.length;
+                if (receivedBytes > expectedChunkSize) {
+                    writableStream.destroy(new Error('分片大小超出预期'));
+                    ctx.req.destroy();
+                }
+            });
 
             // 将请求的可读流直接“管道”到文件的可写流
             ctx.req.pipe(writableStream);
 
             // 监听流的结束事件
             writableStream.on('finish', () => {
-                // 当分片成功写入磁盘后，更新已上传的大小
-                // 注意：这里我们无法直接从流中获取写入的字节数，
-                // 可以在前端发送分片大小时一并传来，或在此处重新 stat 文件计算，但最简单的是信任客户端数据
-                // file.uploadedSize += writableStream.bytesWritten; // 更新大小
+                if (receivedBytes !== expectedChunkSize) {
+                    reject(new Error('分片大小不匹配'));
+                    return;
+                }
+                file.uploadedSize += receivedBytes;
                 resolve();
             });
 
