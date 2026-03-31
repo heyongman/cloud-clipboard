@@ -22,6 +22,14 @@
                   <v-list-item-title>图片识别</v-list-item-title>
                 </v-list-item-content>
               </v-list-item>
+              <v-list-item link href="#/markdown">
+                <v-list-item-action>
+                  <v-icon>{{mdiLanguageMarkdown}}</v-icon>
+                </v-list-item-action>
+                <v-list-item-content>
+                  <v-list-item-title>Markdown转图片</v-list-item-title>
+                </v-list-item-content>
+              </v-list-item>
                 <!-- 设备列表功能已暂时禁用（需要 WebSocket 支持）
                 <v-list-item link href="#/device">
                     <v-list-item-action>
@@ -229,6 +237,7 @@ import {
   mdiPalette,
   mdiNotificationClearAll,
   mdiOcr,
+  mdiLanguageMarkdown,
   mdiEye,
   mdiEyeOff,
 } from '@mdi/js';
@@ -244,6 +253,7 @@ export default {
             mdiContentPaste,
             mdiDevices,
             mdiOcr,
+            mdiLanguageMarkdown,
             mdiInformation,
             mdiRefresh,
             mdiBrightness4,
