@@ -1,0 +1,2 @@
+- 当前项目是一个在线剪贴板共享项目，前端采用vue2 + vuetify，后端采用nodejs
+- 前端接口页面文件主要在 client\src\views 目录下，文件上传功能在 client\src\components\SendFile.vue 中，后端接口代码主要在： server-node\app\http-router.js ， 程序启动方式：cd server-node && node main.js
