@@ -28,6 +28,7 @@ const apiFirstSegments = new Set([
     'upload',
     'file',
     'content',
+    'subscription',
     'ocr',
 ]);
 const withSearch = ctx => `${ctx.path}${ctx.search || ''}`;

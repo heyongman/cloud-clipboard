@@ -5,6 +5,12 @@ import { koaBody } from 'koa-body';
 
 import config from './config.js';
 import messageQueue from './message.js';
+import { createSubscriptionCache } from './subscription/cache.js';
+import { createSubscriptionConfigStore } from './subscription/config-store.js';
+import {
+    convertSubscriptionSources,
+    generateSubscriptionUrl,
+} from './subscription/service.js';
 import {
     UploadedFile,
     uploadFileMap,
@@ -16,10 +22,49 @@ import {
 } from './util.js';
 
 const historyPath = config.server.historyFile || path.join(process.cwd(), 'history.json');
+const subscriptionConfigPath = config.server.subscriptionFile || path.join(process.cwd(), 'subscription.json');
+const subscriptionStore = createSubscriptionConfigStore({
+    filePath: subscriptionConfigPath,
+});
+const subscriptionCache = createSubscriptionCache({
+    ttlMs: 30 * 1000,
+});
 
 // 文件分享标记存储 Map<"room:messageId", expireTimestamp>
 const shareTokens = new Map();
 const SHARE_EXPIRE_MS = 12 * 60 * 60 * 1000; // 12小时
+
+const getSubscriptionRequestContext = ctx => ({
+    protocol: ctx.protocol,
+    host: ctx.request.host,
+    prefix: config.server.prefix || '',
+});
+
+const formatSubscriptionConfig = (ctx, value) => ({
+    ...value,
+    subscriptionUrl: generateSubscriptionUrl({
+        ...getSubscriptionRequestContext(ctx),
+        token: value.token,
+    }),
+});
+
+const formatPreviewResult = result => ({
+    summary: result.summary,
+    proxyNames: result.proxies.map(item => item.name),
+    errors: result.errors,
+});
+
+const getPublicSubscriptionYaml = async () => {
+    const cacheKey = 'public-subscription-yaml';
+    const cached = subscriptionCache.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const current = await subscriptionStore.read();
+    const result = await convertSubscriptionSources(current);
+    return subscriptionCache.set(cacheKey, result.yaml);
+};
 
 const saveHistory = () => fs.promises.writeFile(historyPath, JSON.stringify({
     file: Array.from(uploadFileMap.values()).map(e => ({
@@ -69,6 +114,82 @@ router.get('/config', authMiddleware, async ctx => {
         text: config.text,
         file: config.file,
     });
+});
+
+router.get('/subscription/config', authMiddleware, async ctx => {
+    const current = await subscriptionStore.read();
+    writeJSON(ctx, 200, formatSubscriptionConfig(ctx, current));
+});
+
+router.put(
+    '/subscription/config',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+    }),
+    async ctx => {
+        try {
+            const saved = await subscriptionStore.save(ctx.request.body || {});
+            subscriptionCache.clear();
+            writeJSON(ctx, 200, formatSubscriptionConfig(ctx, saved));
+        } catch (error) {
+            writeJSON(ctx, error.status || 400, {}, error.message || '保存订阅配置失败');
+        }
+    },
+);
+
+router.post(
+    '/subscription/preview',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+    }),
+    async ctx => {
+        try {
+            const result = await convertSubscriptionSources(ctx.request.body || {});
+            writeJSON(ctx, 200, formatPreviewResult(result));
+        } catch (error) {
+            writeJSON(ctx, error.status || 400, {}, error.message || '预览失败');
+        }
+    },
+);
+
+router.post('/subscription/token/reset', authMiddleware, async ctx => {
+    try {
+        const saved = await subscriptionStore.resetToken();
+        subscriptionCache.clear();
+        writeJSON(ctx, 200, formatSubscriptionConfig(ctx, saved));
+    } catch (error) {
+        writeJSON(ctx, error.status || 500, {}, error.message || '重置订阅 token 失败');
+    }
+});
+
+router.get('/subscription/clash', async ctx => {
+    const token = `${ctx.query.token || ''}`.trim();
+    const current = await subscriptionStore.read();
+    if (!token || token !== current.token) {
+        ctx.status = 403;
+        ctx.body = 'Forbidden';
+        return;
+    }
+
+    try {
+        const yamlText = await getPublicSubscriptionYaml();
+        ctx.set('Content-Type', 'text/yaml; charset=utf-8');
+        ctx.body = yamlText;
+    } catch (error) {
+        console.error(error.message);
+        console.error(error.stack);
+        ctx.status = error.status || 502;
+        ctx.set('Content-Type', 'text/plain; charset=utf-8');
+        ctx.body = error.message || '订阅生成失败';
+    }
 });
 
 // 分页获取消息列表（HTTP 替代 WebSocket receiveMulti 事件）

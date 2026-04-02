@@ -56,3 +56,14 @@ export async function copyToClipboard(text) {
     // 3. 最终降级：返回失败，由调用方处理（如弹窗显示文本）
     return { success: false, text };
 }
+
+export function splitLines(text) {
+    return `${text ?? ''}`
+        .split(/\r?\n/)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+export function joinLines(items) {
+    return Array.isArray(items) ? items.join('\n') : '';
+}

@@ -30,6 +30,14 @@
                   <v-list-item-title>Markdown转图片</v-list-item-title>
                 </v-list-item-content>
               </v-list-item>
+              <v-list-item link href="#/subscription">
+                <v-list-item-action>
+                  <v-icon>{{mdiAutorenew}}</v-icon>
+                </v-list-item-action>
+                <v-list-item-content>
+                  <v-list-item-title>订阅转换</v-list-item-title>
+                </v-list-item-content>
+              </v-list-item>
                 <!-- 设备列表功能已暂时禁用（需要 WebSocket 支持）
                 <v-list-item link href="#/device">
                     <v-list-item-action>
@@ -93,7 +101,7 @@
             dark
         >
             <v-app-bar-nav-icon @click.stop="drawer = !drawer" />
-            <v-toolbar-title>剪贴板<span class="d-none d-sm-inline" v-if="$root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
+            <v-toolbar-title>{{ currentPageTitle }}<span class="d-none d-sm-inline" v-if="showRoomInTitle && $root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
             <v-spacer></v-spacer>
             <v-tooltip left>
                 <template v-slot:activator="{ on }">
@@ -238,6 +246,7 @@ import {
   mdiNotificationClearAll,
   mdiOcr,
   mdiLanguageMarkdown,
+  mdiAutorenew,
   mdiEye,
   mdiEyeOff,
 } from '@mdi/js';
@@ -254,6 +263,7 @@ export default {
             mdiDevices,
             mdiOcr,
             mdiLanguageMarkdown,
+            mdiAutorenew,
             mdiInformation,
             mdiRefresh,
             mdiBrightness4,
@@ -265,7 +275,21 @@ export default {
             mdiEyeOff,
         };
     },
+    computed: {
+        currentPageTitle() {
+            return this.$route?.meta?.title || '剪贴板';
+        },
+        showRoomInTitle() {
+            return this.$route.path === '/';
+        },
+    },
     methods: {
+        syncDocumentTitle() {
+            const roomSuffix = this.showRoomInTitle && this.$root.room
+                ? ` - 房间 ${this.$root.room}`
+                : '';
+            document.title = `${this.currentPageTitle}${roomSuffix} - Cloud Clipboard`;
+        },
         async copyRoomName() {
             const result = await copyToClipboard(this.$root.room);
             if (result.success) {
@@ -312,6 +336,13 @@ export default {
         this.$watch('$vuetify.theme.themes.light.primary', (newVal) => {
             localStorage.setItem('lightPrimary', newVal);
         });
+        this.$watch('$route.fullPath', () => {
+            this.syncDocumentTitle();
+        });
+        this.$watch('$root.room', () => {
+            this.syncDocumentTitle();
+        });
+        this.syncDocumentTitle();
     },
 };
 
