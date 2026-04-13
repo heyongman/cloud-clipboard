@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 
-import { parse, stringify } from 'yaml';
+import { parse, Scalar, stringify } from 'yaml';
 
 const URI_PROTOCOL_PATTERN = /^(ss|trojan|vmess|vless):\/\//i;
 
@@ -18,6 +18,39 @@ const sanitizeLines = value => {
 
     return value
         .map(item => `${item ?? ''}`.trim())
+        .filter(Boolean);
+};
+
+const sanitizeRuleLines = value => sanitizeLines(value).map(rule => {
+    if (rule.length >= 2 && rule.startsWith('\'') && rule.endsWith('\'')) {
+        return rule.slice(1, -1).trim();
+    }
+
+    return rule;
+});
+
+const sanitizeProxyGroups = value => {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map(item => {
+            if (!item || typeof item !== 'object') {
+                return null;
+            }
+
+            const name = `${item.name ?? ''}`.trim();
+            const type = `${item.type ?? ''}`.trim().toLowerCase();
+            if (!name) {
+                return null;
+            }
+
+            return {
+                name,
+                type,
+            };
+        })
         .filter(Boolean);
 };
 
@@ -65,7 +98,7 @@ const normalizeProxy = proxy => {
     };
 };
 
-const parseClashYaml = rawText => {
+const parseClashSubscription = rawText => {
     try {
         const parsed = parse(rawText);
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.proxies)) {
@@ -76,7 +109,16 @@ const parseClashYaml = rawText => {
             .map(normalizeProxy)
             .filter(Boolean);
 
-        return proxies.length ? proxies : null;
+        if (!proxies.length) {
+            return null;
+        }
+
+        return {
+            proxies,
+            dns: parsed.dns && typeof parsed.dns === 'object' ? parsed.dns : undefined,
+            rules: sanitizeRuleLines(parsed.rules),
+            proxyGroups: sanitizeProxyGroups(parsed['proxy-groups']),
+        };
     } catch {
         return null;
     }
@@ -279,6 +321,66 @@ const matchesInclude = (name, includeRegexes) => (
 
 const matchesExclude = (name, excludeRegexes) => excludeRegexes.some(regex => regex.test(name));
 
+const buildInheritedRuleGroupMap = proxyGroups => {
+    const groups = sanitizeProxyGroups(proxyGroups);
+    const mapped = new Map();
+    const urlTestGroups = groups.filter(group => group.type === 'url-test');
+    const fallbackGroup = groups.find(group => group.type === 'fallback');
+
+    if (urlTestGroups[0]?.name) {
+        mapped.set(urlTestGroups[0].name, '自动选择');
+    }
+
+    if (urlTestGroups[1]?.name) {
+        mapped.set(urlTestGroups[1].name, 'HYM');
+    }
+
+    if (fallbackGroup?.name) {
+        mapped.set(fallbackGroup.name, '故障转移');
+    }
+
+    if (groups[0]?.name) {
+        mapped.set(groups[0].name, '分组选择');
+    }
+
+    return {
+        mapped,
+        upstreamGroupNames: new Set(groups.map(group => group.name)),
+    };
+};
+
+const rewriteInheritedRules = (rules, proxyGroups) => {
+    const normalizedRules = sanitizeRuleLines(rules);
+    if (!normalizedRules.length) {
+        return [];
+    }
+
+    const {
+        mapped,
+        upstreamGroupNames,
+    } = buildInheritedRuleGroupMap(proxyGroups);
+
+    return normalizedRules.map(rule => rule
+        .split(',')
+        .map(segment => {
+            const trimmed = segment.trim();
+            if (!trimmed) {
+                return trimmed;
+            }
+
+            if (mapped.has(trimmed)) {
+                return mapped.get(trimmed);
+            }
+
+            if (upstreamGroupNames.has(trimmed)) {
+                return '分组选择';
+            }
+
+            return trimmed;
+        })
+        .join(','));
+};
+
 const defaultFetchSource = async url => {
     const response = await fetch(url, {
         headers: {
@@ -330,9 +432,9 @@ export const parseSubscriptionContent = async rawText => {
         return [];
     }
 
-    const clashProxies = parseClashYaml(text);
-    if (clashProxies) {
-        return clashProxies;
+    const clashSubscription = parseClashSubscription(text);
+    if (clashSubscription) {
+        return clashSubscription.proxies;
     }
 
     const decodedText = tryDecodeBase64Text(text) || text;
@@ -361,44 +463,65 @@ export const normalizeAndFilterProxies = (proxies, includePatterns = [], exclude
     };
 };
 
-export const buildClashYaml = (allProxies, filteredProxies = allProxies, customRules = []) => stringify({
-    'mixed-port': 7890,
-    'allow-lan': false,
-    mode: 'rule',
-    proxies: allProxies,
-    'proxy-groups': [
-        {
-            name: '分组选择',
-            type: 'select',
-            proxies: ['HYM', '自动选择', '故障转移'],
-        },
-        {
-            name: 'HYM',
-            type: 'url-test',
-            url: 'https://www.gstatic.com/generate_204',
-            interval: 300,
-            proxies: filteredProxies.map(item => item.name),
-        },
-        {
-            name: '自动选择',
-            type: 'url-test',
-            url: 'https://www.gstatic.com/generate_204',
-            interval: 300,
-            proxies: allProxies.map(item => item.name),
-        },
-        {
-            name: '故障转移',
-            type: 'fallback',
-            url: 'https://www.gstatic.com/generate_204',
-            interval: 300,
-            proxies: allProxies.map(item => item.name),
-        },
-    ],
-    rules: [
-        ...sanitizeLines(customRules),
-        'MATCH,分组选择',
-    ],
-});
+const createSingleQuotedRule = rule => {
+    const scalar = new Scalar(rule);
+    scalar.type = Scalar.QUOTE_SINGLE;
+    return scalar;
+};
+
+export const buildClashYaml = (
+    allProxies,
+    filteredProxies = allProxies,
+    customRules = [],
+    dns,
+    inheritedRules = [],
+) => {
+    const normalizedRules = [
+        ...sanitizeRuleLines(customRules),
+        ...sanitizeRuleLines(inheritedRules),
+    ];
+
+    if (!normalizedRules.length) {
+        normalizedRules.push('MATCH,分组选择');
+    }
+
+    return stringify({
+        'mixed-port': 7890,
+        'allow-lan': false,
+        mode: 'rule',
+        ...(dns ? { dns } : {}),
+        proxies: allProxies,
+        'proxy-groups': [
+            {
+                name: '分组选择',
+                type: 'select',
+                proxies: ['HYM', '自动选择', '故障转移'],
+            },
+            {
+                name: 'HYM',
+                type: 'url-test',
+                url: 'https://www.gstatic.com/generate_204',
+                interval: 300,
+                proxies: filteredProxies.map(item => item.name),
+            },
+            {
+                name: '自动选择',
+                type: 'url-test',
+                url: 'https://www.gstatic.com/generate_204',
+                interval: 300,
+                proxies: allProxies.map(item => item.name),
+            },
+            {
+                name: '故障转移',
+                type: 'fallback',
+                url: 'https://www.gstatic.com/generate_204',
+                interval: 300,
+                proxies: allProxies.map(item => item.name),
+            },
+        ],
+        rules: normalizedRules.map(createSingleQuotedRule),
+    });
+};
 
 export const convertSubscriptionSources = async ({
     sources,
@@ -422,17 +545,34 @@ export const convertSubscriptionSources = async ({
     const errors = [];
     let successSourceCount = 0;
     let failedSourceCount = 0;
+    let inheritedDns;
+    let inheritedRules = [];
+    let templateSelected = false;
 
     for (const source of validSources) {
         try {
             const rawText = await fetchSource(source);
-            const parsedProxies = await parseSubscriptionContent(rawText);
+            const text = `${rawText ?? ''}`.trim();
+            const clashSubscription = parseClashSubscription(text);
+            const parsedProxies = clashSubscription
+                ? clashSubscription.proxies
+                : parseProxyUriList(tryDecodeBase64Text(text) || text);
+
             if (!parsedProxies.length) {
                 throw new Error('未解析到节点');
             }
 
             proxies.push(...parsedProxies);
             successSourceCount += 1;
+
+            if (!templateSelected) {
+                inheritedDns = clashSubscription?.dns;
+                inheritedRules = rewriteInheritedRules(
+                    clashSubscription?.rules,
+                    clashSubscription?.proxyGroups,
+                );
+                templateSelected = true;
+            }
         } catch (error) {
             failedSourceCount += 1;
             errors.push({
@@ -463,7 +603,13 @@ export const convertSubscriptionSources = async ({
             dedupedProxyCount: filteredResult.dedupedCount,
             filteredProxyCount: filteredResult.filteredCount,
         },
-        yaml: buildClashYaml(filteredResult.allProxies, filteredResult.proxies, validCustomRules),
+        yaml: buildClashYaml(
+            filteredResult.allProxies,
+            filteredResult.proxies,
+            validCustomRules,
+            inheritedDns,
+            inheritedRules,
+        ),
     };
 };
 

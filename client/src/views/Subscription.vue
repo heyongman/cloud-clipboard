@@ -89,7 +89,7 @@
                             placeholder="DOMAIN-SUFFIX,example.com,HYM&#10;GEOIP,CN,DIRECT"
                         ></v-textarea>
                         <div class="caption text--secondary mt-2">
-                            这些规则会追加到最终订阅配置的 rules 中，并排在默认的 MATCH,分组选择 之前。
+                            这些规则会加到最终订阅配置的 rules 最前面，并优先于首个成功订阅继承过来的 rules。
                         </div>
                     </v-card-text>
                     <v-divider></v-divider>
