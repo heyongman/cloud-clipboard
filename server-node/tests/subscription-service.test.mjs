@@ -69,16 +69,14 @@ test('buildClashYaml 继承 dns 与 rules，自定义规则排在最前并统一
 
     assert.match(yamlText, /HYM/);
     assert.match(yamlText, /分组选择/);
-    assert.match(yamlText, /自动选择/);
-    assert.match(yamlText, /故障转移/);
     assert.match(yamlText, /MATCH,分组选择/);
     assert.deepEqual(parsed.proxies.map(item => item.name), ['HK-A', 'US-B']);
     assert.equal(groupMap['分组选择'].type, 'select');
-    assert.deepEqual(groupMap['分组选择'].proxies, ['HYM', '自动选择', '故障转移']);
+    assert.deepEqual(groupMap['分组选择'].proxies, ['HYM', 'HK-A', 'US-B']);
     assert.equal(groupMap.HYM.type, 'url-test');
     assert.deepEqual(groupMap.HYM.proxies, ['HK-A']);
-    assert.deepEqual(groupMap['自动选择'].proxies, ['HK-A', 'US-B']);
-    assert.deepEqual(groupMap['故障转移'].proxies, ['HK-A', 'US-B']);
+    assert.equal(groupMap['自动选择'], undefined);
+    assert.equal(groupMap['故障转移'], undefined);
     assert.deepEqual(parsed.dns, {
         enable: true,
         ipv6: false,
@@ -158,18 +156,22 @@ proxies:
     assert.deepEqual(parsed.rules, [
         'GEOIP,CN,DIRECT',
         'DOMAIN-SUFFIX,example.com,分组选择',
-        'DOMAIN-KEYWORD,stream,自动选择',
+        'DOMAIN-KEYWORD,stream,分组选择',
         'DOMAIN,manual.example,HYM',
-        'GEOIP,US,故障转移',
+        'GEOIP,US,分组选择',
         'MATCH,DIRECT',
     ]);
     assert.match(result.yaml, /- 'GEOIP,CN,DIRECT'/);
     assert.match(result.yaml, /- 'DOMAIN-SUFFIX,example\.com,分组选择'/);
-    assert.match(result.yaml, /- 'DOMAIN-KEYWORD,stream,自动选择'/);
+    assert.match(result.yaml, /- 'DOMAIN-KEYWORD,stream,分组选择'/);
     assert.match(result.yaml, /- 'DOMAIN,manual\.example,HYM'/);
-    assert.match(result.yaml, /- 'GEOIP,US,故障转移'/);
+    assert.match(result.yaml, /- 'GEOIP,US,分组选择'/);
     assert.match(result.yaml, /- 'MATCH,DIRECT'/);
     assert.equal(result.errors.length, 1);
+    const groupMap = Object.fromEntries(parsed['proxy-groups'].map(item => [item.name, item]));
+    assert.deepEqual(groupMap['分组选择'].proxies, ['HYM', 'HK-2', 'US-1']);
+    assert.equal(groupMap['自动选择'], undefined);
+    assert.equal(groupMap['故障转移'], undefined);
 });
 
 test('generateSubscriptionUrl 生成固定公开地址', () => {

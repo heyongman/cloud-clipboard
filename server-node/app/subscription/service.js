@@ -327,16 +327,16 @@ const buildInheritedRuleGroupMap = proxyGroups => {
     const urlTestGroups = groups.filter(group => group.type === 'url-test');
     const fallbackGroup = groups.find(group => group.type === 'fallback');
 
-    if (urlTestGroups[0]?.name) {
-        mapped.set(urlTestGroups[0].name, '自动选择');
-    }
-
     if (urlTestGroups[1]?.name) {
         mapped.set(urlTestGroups[1].name, 'HYM');
     }
 
     if (fallbackGroup?.name) {
-        mapped.set(fallbackGroup.name, '故障转移');
+        mapped.set(fallbackGroup.name, '分组选择');
+    }
+
+    if (urlTestGroups[0]?.name && !mapped.has(urlTestGroups[0].name)) {
+        mapped.set(urlTestGroups[0].name, '分组选择');
     }
 
     if (groups[0]?.name) {
@@ -476,6 +476,10 @@ export const buildClashYaml = (
     dns,
     inheritedRules = [],
 ) => {
+    const selectProxyNames = Array.from(new Set([
+        'HYM',
+        ...allProxies.map(item => item.name),
+    ]));
     const normalizedRules = [
         ...sanitizeRuleLines(customRules),
         ...sanitizeRuleLines(inheritedRules),
@@ -495,7 +499,7 @@ export const buildClashYaml = (
             {
                 name: '分组选择',
                 type: 'select',
-                proxies: ['HYM', '自动选择', '故障转移'],
+                proxies: selectProxyNames,
             },
             {
                 name: 'HYM',
@@ -503,20 +507,6 @@ export const buildClashYaml = (
                 url: 'https://www.gstatic.com/generate_204',
                 interval: 300,
                 proxies: filteredProxies.map(item => item.name),
-            },
-            {
-                name: '自动选择',
-                type: 'url-test',
-                url: 'https://www.gstatic.com/generate_204',
-                interval: 300,
-                proxies: allProxies.map(item => item.name),
-            },
-            {
-                name: '故障转移',
-                type: 'fallback',
-                url: 'https://www.gstatic.com/generate_204',
-                interval: 300,
-                proxies: allProxies.map(item => item.name),
             },
         ],
         rules: normalizedRules.map(createSingleQuotedRule),
