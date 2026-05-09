@@ -170,27 +170,25 @@
                         @change="handleFileInput"
                     >
                     <div class="composer-actions">
-                        <div class="tool-toggle-group">
-                            <v-btn
-                                small
-                                text
-                                class="tool-toggle"
-                                :color="activeConversation.webSearch ? 'primary' : undefined"
-                                @click="toggleConversationOption('webSearch')"
-                            >
-                                <v-icon small>{{ mdiWeb }}</v-icon>
-                                联网
-                            </v-btn>
-                            <v-btn
-                                small
-                                text
-                                class="tool-toggle"
-                                :color="activeConversation.imageGeneration ? 'primary' : undefined"
-                                @click="toggleConversationOption('imageGeneration')"
-                            >
-                                <v-icon small>{{ mdiImage }}</v-icon>
-                                画图
-                            </v-btn>
+                        <div class="tool-switch-group">
+                            <v-switch
+                                v-model="activeConversation.webSearch"
+                                dense
+                                inset
+                                hide-details
+                                label="联网"
+                                class="tool-switch"
+                                @change="persist"
+                            ></v-switch>
+                            <v-switch
+                                v-model="activeConversation.imageGeneration"
+                                dense
+                                inset
+                                hide-details
+                                label="画图"
+                                class="tool-switch"
+                                @change="persist"
+                            ></v-switch>
                         </div>
                         <v-chip small outlined color="primary">
                             {{ tokenUsageText }}
@@ -318,7 +316,6 @@ import {
     mdiEye,
     mdiEyeOff,
     mdiFile,
-    mdiImage,
     mdiImagePlus,
     mdiPlus,
     mdiRefresh,
@@ -326,7 +323,6 @@ import {
     mdiSend,
     mdiStop,
     mdiTune,
-    mdiWeb,
 } from '@mdi/js';
 import {
     DEFAULT_ROLES,
@@ -361,7 +357,6 @@ export default {
             mdiEye,
             mdiEyeOff,
             mdiFile,
-            mdiImage,
             mdiImagePlus,
             mdiPlus,
             mdiRefresh,
@@ -369,7 +364,6 @@ export default {
             mdiSend,
             mdiStop,
             mdiTune,
-            mdiWeb,
             roles: DEFAULT_ROLES,
             selectedRoleId: DEFAULT_ROLES[0].id,
             newChatDialog: false,
@@ -461,12 +455,13 @@ export default {
                 'markdown-it'
             );
             const MarkdownIt = module.default || module;
-            this.markdownParser = new MarkdownIt({
+            this.markdownParser = new MarkdownIt('default', {
                 html: false,
                 breaks: true,
                 linkify: true,
                 typographer: true,
             });
+            this.markdownParser.enable(['table', 'strikethrough']);
         },
         renderMarkdown(text) {
             if (!this.markdownParser) {
@@ -599,11 +594,6 @@ export default {
         },
         removeDraftAttachment(id) {
             this.draftAttachments = this.draftAttachments.filter(item => item.id !== id);
-        },
-        toggleConversationOption(key) {
-            if (!this.activeConversation) return;
-            this.$set(this.activeConversation, key, !this.activeConversation[key]);
-            this.persist();
         },
         async fileToAttachment(file) {
             const isImage = file.type.startsWith('image/');
@@ -1096,6 +1086,7 @@ export default {
     line-height: 1.75;
     word-break: break-word;
     color: inherit;
+    overflow-x: auto;
 }
 
 .markdown-body >>> p,
@@ -1112,6 +1103,35 @@ export default {
     padding: 12px;
     border-radius: 6px;
     background: rgba(0, 0, 0, 0.08);
+}
+
+.markdown-body >>> table {
+    display: table;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    margin: 0 0 0.8em;
+    border-collapse: collapse;
+    border-spacing: 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.markdown-body >>> th,
+.markdown-body >>> td {
+    border: 1px solid rgba(127, 127, 127, 0.32);
+    padding: 6px 10px;
+    vertical-align: top;
+    white-space: normal;
+}
+
+.markdown-body >>> th {
+    font-weight: 600;
+    background: rgba(127, 127, 127, 0.12);
+}
+
+.markdown-body >>> tbody tr:nth-child(even) {
+    background: rgba(127, 127, 127, 0.05);
 }
 
 .markdown-body >>> code {
@@ -1176,24 +1196,16 @@ export default {
     flex-wrap: wrap;
 }
 
-.tool-toggle-group {
+.tool-switch-group {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 12px;
 }
 
-.tool-toggle {
-    min-width: 0 !important;
-    padding: 0 4px !important;
-    letter-spacing: 0;
-}
-
-.tool-toggle >>> .v-icon {
-    margin-right: 0;
-}
-
-.tool-toggle >>> .v-btn__content {
-    gap: 0;
+.tool-switch {
+    margin-top: 0;
+    padding-top: 0;
+    flex: 0 0 auto;
 }
 
 .hidden-file-input {

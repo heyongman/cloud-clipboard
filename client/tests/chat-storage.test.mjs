@@ -94,12 +94,12 @@ test('token 展示累计当前对话所有 input 和 output', () => {
   ]);
 
   assert.deepEqual(usage, { inputTokens: 310, outputTokens: 130, totalTokens: 440 });
-  assert.equal(formatTokenUsage(usage), '输入 310 / 输出 130 / 合计 440');
+  assert.equal(formatTokenUsage(usage), '440 tokens');
 });
 
 test('token 统计兼容只有会话级 usage 的旧数据', () => {
   const usage = sumTokenUsage([], { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
 
   assert.deepEqual(usage, { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 });
-  assert.equal(formatTokenUsage(usage), '输入 1,200 / 输出 300 / 合计 1,500');
+  assert.equal(formatTokenUsage(usage), '1,500 tokens');
 });

@@ -29,5 +29,5 @@ export const formatTokenUsage = (usage = {}) => {
     const input = normalizeTokenCount(usage.inputTokens);
     const output = normalizeTokenCount(usage.outputTokens);
     const total = normalizeTokenCount(usage.totalTokens) || input + output;
-    return `输入 ${input.toLocaleString()} / 输出 ${output.toLocaleString()} / 合计 ${total.toLocaleString()}`;
+    return `${total.toLocaleString()} tokens`;
 };
