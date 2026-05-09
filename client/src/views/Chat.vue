@@ -171,24 +171,30 @@
                     >
                     <div class="composer-actions">
                         <div class="tool-switch-group">
-                            <v-switch
-                                v-model="activeConversation.webSearch"
-                                dense
-                                inset
-                                hide-details
-                                label="联网"
-                                class="tool-switch"
-                                @change="persist"
-                            ></v-switch>
-                            <v-switch
-                                v-model="activeConversation.imageGeneration"
-                                dense
-                                inset
-                                hide-details
-                                label="画图"
-                                class="tool-switch"
-                                @change="persist"
-                            ></v-switch>
+                            <label class="tool-switch-item">
+                                <span>联网</span>
+                                <v-switch
+                                    v-model="activeConversation.webSearch"
+                                    dense
+                                    inset
+                                    hide-details
+                                    aria-label="联网"
+                                    class="tool-switch"
+                                    @change="persist"
+                                ></v-switch>
+                            </label>
+                            <label class="tool-switch-item">
+                                <span>画图</span>
+                                <v-switch
+                                    v-model="activeConversation.imageGeneration"
+                                    dense
+                                    inset
+                                    hide-details
+                                    aria-label="画图"
+                                    class="tool-switch"
+                                    @change="persist"
+                                ></v-switch>
+                            </label>
                         </div>
                         <v-chip small outlined color="primary">
                             {{ tokenUsageText }}
