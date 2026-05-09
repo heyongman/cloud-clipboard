@@ -5,7 +5,7 @@
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build --modern && node after-build.js",
-    "test": "node --test tests/markdown-export.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "axios": "^1.11.0",

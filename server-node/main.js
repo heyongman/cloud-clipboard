@@ -29,6 +29,7 @@ const apiFirstSegments = new Set([
     'file',
     'content',
     'subscription',
+    'ai',
     'ocr',
 ]);
 const withSearch = ctx => `${ctx.path}${ctx.search || ''}`;

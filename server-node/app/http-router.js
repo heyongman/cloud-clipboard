@@ -4,6 +4,21 @@ import KoaRouter from '@koa/router';
 import { koaBody } from 'koa-body';
 
 import config from './config.js';
+import { createAiConfigStore } from './ai/config-store.js';
+import { getKnownModelContexts } from './ai/model-context.js';
+import {
+    buildResponsesPayload,
+    buildSummaryPayload,
+    createStreamingResponse,
+    createSummary,
+    estimateMessagesTokens,
+    listModels,
+} from './ai/openai-client.js';
+import {
+    encodeSseEvent,
+    normalizeOpenAiSseEvent,
+    parseSseStream,
+} from './ai/stream.js';
 import messageQueue from './message.js';
 import { createSubscriptionCache } from './subscription/cache.js';
 import { createSubscriptionConfigStore } from './subscription/config-store.js';
@@ -23,8 +38,12 @@ import {
 
 const historyPath = config.server.historyFile || path.join(process.cwd(), 'history.json');
 const subscriptionConfigPath = config.server.subscriptionFile || path.join(process.cwd(), 'subscription.json');
+const aiConfigPath = config.server.aiConfigFile || path.join(process.cwd(), 'ai-config.json');
 const subscriptionStore = createSubscriptionConfigStore({
     filePath: subscriptionConfigPath,
+});
+const aiConfigStore = createAiConfigStore({
+    filePath: aiConfigPath,
 });
 const subscriptionCache = createSubscriptionCache({
     ttlMs: 30 * 1000,
@@ -137,6 +156,153 @@ router.put(
             writeJSON(ctx, 200, formatSubscriptionConfig(ctx, saved));
         } catch (error) {
             writeJSON(ctx, error.status || 400, {}, error.message || '保存订阅配置失败');
+        }
+    },
+);
+
+router.get('/ai/config', authMiddleware, async ctx => {
+    writeJSON(ctx, 200, await aiConfigStore.readPublic());
+});
+
+router.put(
+    '/ai/config',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+    }),
+    async ctx => {
+        try {
+            const saved = await aiConfigStore.save(ctx.request.body || {});
+            writeJSON(ctx, 200, {
+                ...saved,
+                apiKey: undefined,
+                hasApiKey: !!saved.apiKey,
+            });
+        } catch (error) {
+            writeJSON(ctx, error.status || 400, {}, error.message || '保存 AI 配置失败');
+        }
+    },
+);
+
+router.get('/ai/models', authMiddleware, async ctx => {
+    try {
+        const aiConfig = await aiConfigStore.read();
+        const items = await listModels(aiConfig);
+        await aiConfigStore.saveCachedModels(items);
+        writeJSON(ctx, 200, {
+            items,
+        });
+    } catch (error) {
+        writeJSON(ctx, error.status || 502, {}, error.message || '查询模型失败');
+    }
+});
+
+router.get('/ai/models/context', authMiddleware, async ctx => {
+    writeJSON(ctx, 200, {
+        items: getKnownModelContexts(),
+    });
+});
+
+router.post(
+    '/ai/token-estimate',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+        jsonLimit: '25mb',
+    }),
+    async ctx => {
+        const messages = ctx.request.body?.messages || [];
+        writeJSON(ctx, 200, {
+            inputTokens: estimateMessagesTokens(messages),
+            estimated: true,
+        });
+    },
+);
+
+router.post(
+    '/ai/summary',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+        jsonLimit: '25mb',
+    }),
+    async ctx => {
+        try {
+            const aiConfig = await aiConfigStore.read();
+            const body = ctx.request.body || {};
+            const payload = buildSummaryPayload({
+                model: body.model || aiConfig.summaryModel,
+                rolePrompt: body.rolePrompt || '',
+                messages: body.messages || [],
+            });
+            writeJSON(ctx, 200, await createSummary(aiConfig, payload));
+        } catch (error) {
+            writeJSON(ctx, error.status || 502, {}, error.message || '生成摘要失败');
+        }
+    },
+);
+
+router.post(
+    '/ai/responses/stream',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+        jsonLimit: '25mb',
+    }),
+    async ctx => {
+        ctx.respond = false;
+        ctx.res.statusCode = 200;
+        ctx.res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        ctx.res.setHeader('Cache-Control', 'no-cache, no-transform');
+        ctx.res.setHeader('Connection', 'keep-alive');
+
+        const abortController = new AbortController();
+        const abortUpstream = () => abortController.abort();
+        ctx.res.on('close', abortUpstream);
+
+        try {
+            const aiConfig = await aiConfigStore.read();
+            const body = ctx.request.body || {};
+            const payload = buildResponsesPayload({
+                model: body.model || aiConfig.defaultModel,
+                reasoningEffort: body.reasoningEffort || aiConfig.defaultReasoningEffort,
+                rolePrompt: body.rolePrompt || '',
+                messages: body.messages || [],
+                tools: body.tools || {},
+                stream: true,
+            });
+            const upstream = await createStreamingResponse(aiConfig, payload, {
+                signal: abortController.signal,
+            });
+
+            for await (const upstreamEvent of parseSseStream(upstream.body)) {
+                for (const downstreamEvent of normalizeOpenAiSseEvent(upstreamEvent)) {
+                    ctx.res.write(encodeSseEvent(downstreamEvent.event, downstreamEvent.data));
+                }
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError' && !ctx.res.destroyed) {
+                ctx.res.write(encodeSseEvent('error', {
+                    message: error.message || 'AI 请求失败',
+                }));
+            }
+        } finally {
+            ctx.res.off('close', abortUpstream);
+            if (!ctx.res.destroyed) {
+                ctx.res.end();
+            }
         }
     },
 );

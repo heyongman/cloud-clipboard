@@ -26,8 +26,19 @@ export default {
             this.disconnect();
             this.connect();
         },
+        '$route.path'() {
+            if (this.isClipboardRoute()) {
+                this.connect();
+            } else {
+                this.disconnect();
+            }
+        },
     },
     methods: {
+        isClipboardRoute() {
+            return this.$route?.path === '/';
+        },
+
         async fetchConfig() {
             const { data: { result } } = await this.$http.get('config');
             if (result) {
@@ -78,6 +89,7 @@ export default {
 
         async connect() {
             if (this.connecting) return;
+            if (!this.isClipboardRoute()) return;
             if (!this.authCode) {
                 this.authCodeDialog = true;
                 return;
@@ -117,6 +129,7 @@ export default {
 
         async refresh() {
             if (this.loading) return;
+            if (!this.isClipboardRoute()) return;
 
             this.hasMore = true;
             try {
@@ -128,6 +141,7 @@ export default {
         },
 
         async loadMore() {
+            if (!this.isClipboardRoute()) return;
             if (!this.hasMore || this.loading || !this.$root.received.length) return; 
 
             const lastId = this.$root.received[this.$root.received.length - 1]?.id;

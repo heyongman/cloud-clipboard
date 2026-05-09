@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+    buildResponsesPayload,
+    buildSummaryPayload,
+    estimateMessagesTokens,
+} from '../app/ai/openai-client.js';
+import {
+    getKnownModelContexts,
+    getModelContextWindow,
+} from '../app/ai/model-context.js';
+
+test('buildResponsesPayload 转换文本、图片、工具和 reasoning', () => {
+    const payload = buildResponsesPayload({
+        model: 'gpt-5',
+        reasoningEffort: 'medium',
+        rolePrompt: 'You are helpful.',
+        tools: {
+            webSearch: true,
+            imageGeneration: true,
+        },
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: '看图' },
+                    { type: 'image', dataUrl: 'data:image/png;base64,abc' },
+                ],
+            },
+        ],
+    });
+
+    assert.equal(payload.model, 'gpt-5');
+    assert.equal(payload.stream, true);
+    assert.equal(payload.instructions, 'You are helpful.');
+    assert.deepEqual(payload.reasoning, { effort: 'medium' });
+    assert.deepEqual(payload.tools, [
+        { type: 'web_search' },
+        { type: 'image_generation' },
+    ]);
+    assert.deepEqual(payload.input[0].content, [
+        { type: 'input_text', text: '看图' },
+        { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+    ]);
+});
+
+test('buildResponsesPayload 省略空可选字段', () => {
+    const payload = buildResponsesPayload({
+        model: 'gpt-5-mini',
+        messages: [],
+        tools: {},
+        stream: false,
+    });
+
+    assert.equal(payload.stream, false);
+    assert.equal(payload.instructions, undefined);
+    assert.equal(payload.reasoning, undefined);
+    assert.equal(payload.tools, undefined);
+});
+
+test('buildSummaryPayload 使用非流式请求', () => {
+    const payload = buildSummaryPayload({
+        model: 'gpt-5-mini',
+        rolePrompt: 'role',
+        messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    assert.equal(payload.stream, false);
+    assert.match(payload.instructions, /简洁中文总结/);
+});
+
+test('estimateMessagesTokens 对文本和图片给出估算', () => {
+    const tokens = estimateMessagesTokens([
+        {
+            role: 'user',
+            content: [
+                { type: 'text', text: 'hello world' },
+                { type: 'text', text: '你好' },
+                { type: 'image', dataUrl: 'data:image/png;base64,abc' },
+            ],
+        },
+    ]);
+
+    assert.ok(tokens >= 1200);
+});
+
+test('getModelContextWindow 支持已知模型和版本后缀', () => {
+    assert.equal(getModelContextWindow('gpt-4o'), 128000);
+    assert.equal(getModelContextWindow('gpt-4o-2024-08-06'), 128000);
+    assert.equal(getModelContextWindow('unknown-model'), null);
+    assert.ok(getKnownModelContexts()['gpt-5']);
+});

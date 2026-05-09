@@ -20,6 +20,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             auth: false,
             historyFile: null,
             subscriptionFile: null,
+            aiConfigFile: null,
             storageDir: null,
         },
         text: {
@@ -46,6 +47,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      auth: Boolean,
  *      historyFile: [String],
  *      subscriptionFile: [String],
+ *      aiConfigFile: [String],
  *      storageDir: [String],
  *  },
  *  text: {

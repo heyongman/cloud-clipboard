@@ -38,6 +38,14 @@
                   <v-list-item-title>订阅转换</v-list-item-title>
                 </v-list-item-content>
               </v-list-item>
+              <v-list-item link href="#/chat">
+                <v-list-item-action>
+                  <v-icon>{{mdiRobot}}</v-icon>
+                </v-list-item-action>
+                <v-list-item-content>
+                  <v-list-item-title>AI聊天</v-list-item-title>
+                </v-list-item-content>
+              </v-list-item>
                 <!-- 设备列表功能已暂时禁用（需要 WebSocket 支持）
                 <v-list-item link href="#/device">
                     <v-list-item-action>
@@ -103,7 +111,7 @@
             <v-app-bar-nav-icon @click.stop="drawer = !drawer" />
             <v-toolbar-title>{{ currentPageTitle }}<span class="d-none d-sm-inline" v-if="showRoomInTitle && $root.room">（房间：<abbr title="点击复制" style="cursor:pointer" @click="copyRoomName">{{$root.room}}</abbr>）</span></v-toolbar-title>
             <v-spacer></v-spacer>
-            <v-tooltip left>
+            <v-tooltip v-if="showClipboardActions" left>
                 <template v-slot:activator="{ on }">
                     <v-btn icon v-on="on" @click="$root.roomInput = $root.room; $root.roomDialog = true">
                         <v-icon>{{mdiBulletinBoard}}</v-icon>
@@ -111,7 +119,7 @@
                 </template>
                 <span>进入房间</span>
             </v-tooltip>
-            <v-tooltip left>
+            <v-tooltip v-if="showClipboardActions" left>
                 <template v-slot:activator="{ on }">
                     <v-btn icon v-on="on" @click="$root.refresh()" :loading="$root.loading">
                         <v-icon>{{mdiRefresh}}</v-icon>
@@ -247,6 +255,7 @@ import {
   mdiOcr,
   mdiLanguageMarkdown,
   mdiAutorenew,
+  mdiRobot,
   mdiEye,
   mdiEyeOff,
 } from '@mdi/js';
@@ -264,6 +273,7 @@ export default {
             mdiOcr,
             mdiLanguageMarkdown,
             mdiAutorenew,
+            mdiRobot,
             mdiInformation,
             mdiRefresh,
             mdiBrightness4,
@@ -280,6 +290,9 @@ export default {
             return this.$route?.meta?.title || '剪贴板';
         },
         showRoomInTitle() {
+            return this.$route.path === '/';
+        },
+        showClipboardActions() {
             return this.$route.path === '/';
         },
     },

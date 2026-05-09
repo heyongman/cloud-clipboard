@@ -8,6 +8,7 @@ const Ocr = () => import(/* webpackChunkName: "view-ocr" */ '@/views/Ocr.vue');
 const Device = () => import(/* webpackChunkName: "view-device" */ '@/views/Device.vue');
 const Markdown = () => import(/* webpackChunkName: "view-markdown" */ '@/views/Markdown.vue');
 const Subscription = () => import(/* webpackChunkName: "view-subscription" */ '@/views/Subscription.vue');
+const Chat = () => import(/* webpackChunkName: "view-chat" */ '@/views/Chat.vue');
 
 const router = new VueRouter({
     routes: [
@@ -39,6 +40,13 @@ const router = new VueRouter({
             component: Subscription,
             meta: {
                 title: '订阅转换',
+            },
+        },
+        {
+            path: '/chat',
+            component: Chat,
+            meta: {
+                title: 'AI聊天',
             },
         },
         {
