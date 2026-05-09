@@ -3,7 +3,11 @@
         <div class="ai-chat-shell">
             <aside class="chat-sidebar">
                 <div class="sidebar-toolbar">
-                    <v-btn color="primary" block @click="newChatDialog = true">
+                    <v-btn
+                        v-bind="newChatButtonProps"
+                        block
+                        @click="newChatDialog = true"
+                    >
                         <v-icon left>{{ mdiPlus }}</v-icon>
                         新建聊天
                     </v-btn>
@@ -218,7 +222,11 @@
             <section class="chat-empty" v-else>
                 <v-icon size="56" color="primary">{{ mdiRobot }}</v-icon>
                 <div class="text-subtitle-1 mt-4">选择角色后开始新对话</div>
-                <v-btn color="primary" class="mt-4" @click="newChatDialog = true">
+                <v-btn
+                    v-bind="newChatButtonProps"
+                    class="mt-4"
+                    @click="newChatDialog = true"
+                >
                     <v-icon left>{{ mdiPlus }}</v-icon>
                     新建聊天
                 </v-btn>
@@ -433,6 +441,11 @@ export default {
                 this.activeConversation?.messages || [],
                 this.activeConversation?.usage || {},
             ));
+        },
+        newChatButtonProps() {
+            return this.$vuetify.theme.dark
+                ? { color: 'primary', outlined: true }
+                : { color: 'primary', depressed: true };
         },
     },
     watch: {
@@ -1212,6 +1225,20 @@ export default {
     margin-top: 0;
     padding-top: 0;
     flex: 0 0 auto;
+    width: auto;
+}
+
+.tool-switch-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.tool-switch >>> .v-input__slot {
+    margin-bottom: 0;
 }
 
 .hidden-file-input {

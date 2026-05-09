@@ -81,10 +81,26 @@ export default {
         },
 
         handleAuthError() {
+            const shouldNotify = !this.authCodeDialog;
             this.authCode = '';
             localStorage.removeItem(AUTH_STORAGE_KEY);
             this.authCodeDialog = true;
-            this.$toast.error('认证失败，请输入密码');
+            if (shouldNotify) {
+                this.$toast.error('认证失败，请输入密码');
+            }
+        },
+
+        submitAuthCode() {
+            this.authCode = `${this.authCode || ''}`.trim();
+            if (!this.authCode) return;
+
+            this.authCodeDialog = false;
+            this.persistAuthCode();
+            if (this.isClipboardRoute()) {
+                this.connect();
+            } else {
+                this.$router.go(0);
+            }
         },
 
         async connect() {
@@ -152,7 +168,9 @@ export default {
     },
     mounted() {
         // this.$root.config = createDefaultConfig();
-        this.connect();
+        this.$router.onReady(() => {
+            this.connect();
+        });
     },
     beforeDestroy() {
         this.disconnect();

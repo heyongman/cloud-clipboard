@@ -93,4 +93,14 @@ axios.interceptors.request.use(config => {
     return config;
 });
 
+axios.interceptors.response.use(
+    response => response,
+    error => {
+        if (error?.response?.status === 403 && app.handleAuthError) {
+            app.handleAuthError();
+        }
+        return Promise.reject(error);
+    },
+);
+
 app.$mount('#app');
