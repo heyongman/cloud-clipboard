@@ -175,8 +175,12 @@
                     >
                     <div class="composer-actions">
                         <div class="tool-switch-group">
-                            <label class="tool-switch-item">
-                                <span>联网</span>
+                            <div class="tool-switch-item">
+                                <button
+                                    type="button"
+                                    class="tool-switch-label"
+                                    @click="toggleToolSwitch('webSearch')"
+                                >联网</button>
                                 <v-switch
                                     v-model="activeConversation.webSearch"
                                     dense
@@ -186,9 +190,13 @@
                                     class="tool-switch"
                                     @change="persist"
                                 ></v-switch>
-                            </label>
-                            <label class="tool-switch-item">
-                                <span>画图</span>
+                            </div>
+                            <div class="tool-switch-item">
+                                <button
+                                    type="button"
+                                    class="tool-switch-label"
+                                    @click="toggleToolSwitch('imageGeneration')"
+                                >画图</button>
                                 <v-switch
                                     v-model="activeConversation.imageGeneration"
                                     dense
@@ -198,7 +206,7 @@
                                     class="tool-switch"
                                     @change="persist"
                                 ></v-switch>
-                            </label>
+                            </div>
                         </div>
                         <v-chip small outlined color="primary">
                             {{ tokenUsageText }}
@@ -481,6 +489,11 @@ export default {
                 typographer: true,
             });
             this.markdownParser.enable(['table', 'strikethrough']);
+        },
+        toggleToolSwitch(key) {
+            if (!this.activeConversation) return;
+            this.$set(this.activeConversation, key, !this.activeConversation[key]);
+            this.persist();
         },
         renderMarkdown(text) {
             if (!this.markdownParser) {
@@ -1233,8 +1246,17 @@ export default {
     align-items: center;
     gap: 6px;
     font-size: 0.875rem;
-    cursor: pointer;
     white-space: nowrap;
+}
+
+.tool-switch-label {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+    padding: 0;
 }
 
 .tool-switch >>> .v-input__slot {
