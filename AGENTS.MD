@@ -57,11 +57,14 @@ npm test
 - 文件上传组件：`client/src/components/SendFile.vue`。
 - 文本发送组件：`client/src/components/SendText.vue`。
 - Markdown 图片导出工具：`client/src/utils/markdown-export.mjs`。
+- AI 聊天页面与本地会话存储：`client/src/views/Chat.vue`、`client/src/utils/chat-storage.mjs`。
+- OCR 页面：`client/src/views/Ocr.vue`。
 - Node 后端入口：`server-node/main.js`。
 - Node 后端 HTTP 路由：`server-node/app/http-router.js`。
 - Node 后端配置读取：`server-node/app/config.js`。
 - Node 后端消息队列：`server-node/app/message.js`。
 - Node 后端文件上传存储：`server-node/app/uploaded-file.js`。
+- Node 后端 AI 模块：`server-node/app/ai`。
 - 订阅转换后端模块：`server-node/app/subscription`。
 
 ## 前端开发注意事项
@@ -71,6 +74,8 @@ npm test
 - 与后端通信优先使用项目现有的 axios 实例和 `client/src/api.js` 里的认证、房间、分页等约定。
 - 文件上传相关改动重点检查 `client/src/components/SendFile.vue` 与后端 `/upload`、`/file`、`/content` 相关接口是否一致。
 - Markdown 转图片相关改动优先检查 `client/src/views/Markdown.vue`、`client/src/utils/markdown-export.mjs` 和 `client/tests/markdown-export.test.mjs`。
+- AI 聊天相关改动优先检查 `client/src/views/Chat.vue`、`client/src/utils/chat-storage.mjs` 与后端 `/ai/*` 接口是否一致。
+- OCR 相关改动优先检查 `client/src/views/Ocr.vue` 与 `server-node/main.js` 中 `/ocr` 代理、`prefix` 处理是否一致。
 - 订阅转换页面相关改动优先检查 `client/src/views/Subscription.vue` 与后端 `server-node/app/subscription`。
 
 ## Node 后端开发注意事项
@@ -82,20 +87,24 @@ npm test
 - 文件上传、缩略图、存储路径相关逻辑分布在 `server-node/app/uploaded-file.js`、`server-node/app/util.js` 和 `server-node/app/http-router.js`。
 - 历史消息与上传文件持久化依赖 `history.json`，路径可由配置项 `server.historyFile` 覆盖。
 - 订阅转换配置依赖 `subscription.json`，路径可由配置项 `server.subscriptionFile` 覆盖。
+- AI 配置默认依赖 `ai-config.json`，路径可由配置项 `server.aiConfigFile` 覆盖，相关逻辑位于 `server-node/app/ai`。
+- 上传文件默认存储在系统临时目录下的 `.cloud-clipboard-storage`，可由配置项 `server.storageDir` 覆盖。
 - 修改公开路径、静态资源回退或反向代理行为时，重点检查 `server-node/main.js` 中 `prefix`、SPA fallback、`apiFirstSegments`、OCR 代理和静态目录挂载。
 
 ## 测试与验证
 
 - 前端单测：`cd client && npm test`。
 - Node 后端单测：`cd server-node && npm test`。
+- 前端和 Node 后端单测当前都通过 Node.js 内置 test runner 执行，脚本形式为 `node --test tests/*.test.mjs`。
 - 修改前端构建链路、路由或公共组件后，优先运行 `cd client && npm run build`。
 - 修改后端接口、配置、订阅转换或存储逻辑后，优先运行 `cd server-node && npm test`。
 - 涉及前后端联调时，先启动后端，再启动前端开发服务，并确认前端代理端口与后端监听端口一致。
 
 ## 配置与运行数据
 
-- `server-node/config.json`、`history.json`、`subscription.json`、上传文件目录属于本地运行数据，不应作为常规代码改动提交。
+- `server-node/config.json`、`history.json`、`subscription.json`、`ai-config.json`、上传文件目录属于本地运行数据，不应作为常规代码改动提交。
 - 默认配置由 `server-node/app/config.js` 生成，包含 `server`、`text`、`file` 三组配置。
+- `server` 配置包含 `historyFile`、`subscriptionFile`、`aiConfigFile`、`storageDir` 等可覆盖运行数据路径的字段。
 - `server.prefix` 会被规范化为以 `/` 开头且不以 `/` 结尾的路径；涉及部署子路径时要同时检查前端 `publicPath` 和后端 `prefix` 行为。
 
 ## 文档维护
