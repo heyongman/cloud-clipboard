@@ -64,3 +64,10 @@ test('normalizeOpenAiSseEvent 规范化图片生成结果', () => {
 test('encodeSseEvent 输出 SSE 格式', () => {
     assert.equal(encodeSseEvent('text_delta', { delta: 'a' }), 'event: text_delta\ndata: {"delta":"a"}\n\n');
 });
+
+test('encodeSseEvent 支持 previous response fallback 事件', () => {
+    assert.equal(
+        encodeSseEvent('previous_response_missing', { message: 'retry with full history' }),
+        'event: previous_response_missing\ndata: {"message":"retry with full history"}\n\n',
+    );
+});

@@ -583,7 +583,14 @@ export default {
         async queryModels() {
             this.modelLoading = true;
             try {
-                const { data: { result } } = await this.$http.get('ai/models');
+                const apiKey = this.settings.apiKey.trim();
+                const request = apiKey
+                    ? this.$http.post('ai/models', {
+                        apiBase: this.settings.apiBase,
+                        apiKey,
+                    })
+                    : this.$http.get('ai/models');
+                const { data: { result } } = await request;
                 this.settings.cachedModels = result.items || [];
                 this.applyModelCache(this.settings.cachedModels);
                 this.$toast('模型列表已更新');
@@ -746,6 +753,13 @@ export default {
             }
             return '';
         },
+        isPreviousResponseErrorMessage(message) {
+            const value = `${message || ''}`.toLowerCase();
+            return value.includes('previous_response_id')
+                || value.includes('previous_response')
+                || value.includes('previous response')
+                || value.includes('no response found');
+        },
         async sendMessage() {
             if (!this.canSend || !this.activeConversation) return;
             if (!this.settings.hasApiKey && !this.settings.apiKey) {
@@ -797,12 +811,14 @@ export default {
             this.scrollToBottom();
             await this.startAssistantStream(message);
         },
-        async startAssistantStream(assistantMessage) {
+        async startAssistantStream(assistantMessage, { fullHistory = false } = {}) {
             this.sending = true;
             this.streamStoppedByUser = false;
             this.streamAbortController = new AbortController();
             assistantMessage.completed = false;
+            this.$delete(assistantMessage, 'previousResponseMissing');
             try {
+                const previousResponseId = fullHistory ? '' : this.getPreviousResponseId(assistantMessage);
                 const response = await fetch('ai/responses/stream', {
                     method: 'POST',
                     signal: this.streamAbortController.signal,
@@ -814,9 +830,10 @@ export default {
                         model: this.currentModel || this.settings.defaultModel,
                         reasoningEffort: this.currentReasoningEffort || this.settings.defaultReasoningEffort,
                         rolePrompt: this.activeConversation.rolePrompt,
-                        messages: this.buildRequestMessages(),
+                        messages: fullHistory ? this.buildRequestMessages() : [],
                         latestMessages: this.buildLatestRequestMessages(assistantMessage),
-                        previousResponseId: this.getPreviousResponseId(assistantMessage),
+                        previousResponseId,
+                        useFullHistory: fullHistory,
                         tools: {
                             webSearch: this.activeConversation.webSearch,
                             imageGeneration: this.activeConversation.imageGeneration,
@@ -829,6 +846,11 @@ export default {
                 }
 
                 await this.consumeSse(response.body, assistantMessage);
+                if (assistantMessage.previousResponseMissing && !fullHistory && !this.streamStoppedByUser) {
+                    this.$delete(assistantMessage, 'previousResponseMissing');
+                    await this.startAssistantStream(assistantMessage, { fullHistory: true });
+                    return;
+                }
                 if (!assistantMessage.completed && !this.streamStoppedByUser && !assistantMessage.failed) {
                     assistantMessage.failed = true;
                     assistantMessage.error = 'AI 输出意外结束，请重试。';
@@ -1003,8 +1025,15 @@ export default {
                     this.activeConversation.messages || [],
                     this.activeConversation.usage || {},
                 ));
+            } else if (eventName === 'previous_response_missing') {
+                stream?.flushNow();
+                this.$set(assistantMessage, 'previousResponseMissing', true);
             } else if (eventName === 'error') {
                 stream?.flushNow();
+                if (this.isPreviousResponseErrorMessage(data.message)) {
+                    this.$set(assistantMessage, 'previousResponseMissing', true);
+                    return;
+                }
                 assistantMessage.failed = true;
                 assistantMessage.error = data.message || 'AI请求失败';
             }

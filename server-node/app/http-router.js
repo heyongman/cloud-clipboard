@@ -4,7 +4,7 @@ import KoaRouter from '@koa/router';
 import { koaBody } from 'koa-body';
 
 import config from './config.js';
-import { createAiConfigStore } from './ai/config-store.js';
+import { createAiConfigStore, normalizeAiConfig } from './ai/config-store.js';
 import { getKnownModelContexts } from './ai/model-context.js';
 import {
     buildResponsesPayload,
@@ -188,11 +188,27 @@ router.put(
     },
 );
 
+const queryModelsWithConfig = async ({ body = {}, cache = true } = {}) => {
+    const savedConfig = await aiConfigStore.read();
+    const apiKey = `${body.apiKey ?? ''}`.trim();
+    const queryConfig = apiKey
+        ? normalizeAiConfig({
+            ...savedConfig,
+            apiBase: body.apiBase ?? savedConfig.apiBase,
+            apiKey,
+            keepApiKey: false,
+        }, savedConfig)
+        : savedConfig;
+    const items = await listModels(queryConfig);
+    if (cache && !apiKey) {
+        await aiConfigStore.saveCachedModels(items);
+    }
+    return items;
+};
+
 router.get('/ai/models', authMiddleware, async ctx => {
     try {
-        const aiConfig = await aiConfigStore.read();
-        const items = await listModels(aiConfig);
-        await aiConfigStore.saveCachedModels(items);
+        const items = await queryModelsWithConfig();
         writeJSON(ctx, 200, {
             items,
         });
@@ -200,6 +216,30 @@ router.get('/ai/models', authMiddleware, async ctx => {
         writeJSON(ctx, error.status || 502, {}, error.message || '查询模型失败');
     }
 });
+
+router.post(
+    '/ai/models',
+    authMiddleware,
+    koaBody({
+        multipart: false,
+        urlencoded: false,
+        text: false,
+        json: true,
+    }),
+    async ctx => {
+        try {
+            const items = await queryModelsWithConfig({
+                body: ctx.request.body || {},
+                cache: false,
+            });
+            writeJSON(ctx, 200, {
+                items,
+            });
+        } catch (error) {
+            writeJSON(ctx, error.status || 502, {}, error.message || '查询模型失败');
+        }
+    },
+);
 
 router.get('/ai/models/context', authMiddleware, async ctx => {
     writeJSON(ctx, 200, {
@@ -280,8 +320,8 @@ router.post(
                 model: body.model || aiConfig.defaultModel,
                 reasoningEffort: body.reasoningEffort || aiConfig.defaultReasoningEffort,
                 rolePrompt: body.rolePrompt || '',
-                messages: body.previousResponseId ? (body.latestMessages || []) : (body.messages || []),
-                previousResponseId: body.previousResponseId || '',
+                messages: body.useFullHistory ? (body.messages || []) : (body.latestMessages || body.messages || []),
+                previousResponseId: body.useFullHistory ? '' : (body.previousResponseId || ''),
                 tools: body.tools || {},
                 stream: true,
             };
@@ -295,14 +335,10 @@ router.post(
                 if (!requestOptions.previousResponseId || !isPreviousResponseMissingError(error)) {
                     throw error;
                 }
-                payload = buildResponsesPayload({
-                    ...requestOptions,
-                    messages: body.messages || [],
-                    previousResponseId: '',
-                });
-                upstream = await createStreamingResponse(aiConfig, payload, {
-                    signal: abortController.signal,
-                });
+                ctx.res.write(encodeSseEvent('previous_response_missing', {
+                    message: '上游无法找到 previous response，正在使用完整历史重试。',
+                }));
+                return;
             }
 
             for await (const upstreamEvent of parseSseStream(upstream.body)) {
