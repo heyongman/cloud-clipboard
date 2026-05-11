@@ -79,6 +79,15 @@
                                 <span v-if="message.streaming">正在输出...</span>
                                 <span v-if="message.failed" class="error--text">输出异常</span>
                             </div>
+                            <v-alert
+                                v-if="message.error"
+                                dense
+                                text
+                                type="error"
+                                class="message-error"
+                            >
+                                {{ message.error }}
+                            </v-alert>
                             <div
                                 v-if="message.text"
                                 class="markdown-body"
@@ -832,7 +841,6 @@ export default {
                 } else {
                     assistantMessage.failed = true;
                     assistantMessage.error = error.message || 'AI请求失败';
-                    this.$toast.error(error.message || 'AI请求失败');
                 }
             } finally {
                 assistantMessage.streaming = false;
@@ -999,7 +1007,6 @@ export default {
                 stream?.flushNow();
                 assistantMessage.failed = true;
                 assistantMessage.error = data.message || 'AI请求失败';
-                this.$toast.error(data.message || 'AI请求失败');
             }
         },
         async copyMessageText(message) {
