@@ -79,15 +79,6 @@
                                 <span v-if="message.streaming">正在输出...</span>
                                 <span v-if="message.failed" class="error--text">输出异常</span>
                             </div>
-                            <v-alert
-                                v-if="message.error"
-                                dense
-                                text
-                                type="error"
-                                class="message-error"
-                            >
-                                {{ message.error }}
-                            </v-alert>
                             <div
                                 v-if="message.text"
                                 class="markdown-body"
