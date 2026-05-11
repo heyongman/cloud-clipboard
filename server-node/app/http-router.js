@@ -12,6 +12,7 @@ import {
     createStreamingResponse,
     createSummary,
     estimateMessagesTokens,
+    isPreviousResponseMissingError,
     listModels,
 } from './ai/openai-client.js';
 import {
@@ -275,17 +276,34 @@ router.post(
         try {
             const aiConfig = await aiConfigStore.read();
             const body = ctx.request.body || {};
-            const payload = buildResponsesPayload({
+            const requestOptions = {
                 model: body.model || aiConfig.defaultModel,
                 reasoningEffort: body.reasoningEffort || aiConfig.defaultReasoningEffort,
                 rolePrompt: body.rolePrompt || '',
-                messages: body.messages || [],
+                messages: body.previousResponseId ? (body.latestMessages || []) : (body.messages || []),
+                previousResponseId: body.previousResponseId || '',
                 tools: body.tools || {},
                 stream: true,
-            });
-            const upstream = await createStreamingResponse(aiConfig, payload, {
-                signal: abortController.signal,
-            });
+            };
+            let payload = buildResponsesPayload(requestOptions);
+            let upstream;
+            try {
+                upstream = await createStreamingResponse(aiConfig, payload, {
+                    signal: abortController.signal,
+                });
+            } catch (error) {
+                if (!requestOptions.previousResponseId || !isPreviousResponseMissingError(error)) {
+                    throw error;
+                }
+                payload = buildResponsesPayload({
+                    ...requestOptions,
+                    messages: body.messages || [],
+                    previousResponseId: '',
+                });
+                upstream = await createStreamingResponse(aiConfig, payload, {
+                    signal: abortController.signal,
+                });
+            }
 
             for await (const upstreamEvent of parseSseStream(upstream.body)) {
                 for (const downstreamEvent of normalizeOpenAiSseEvent(upstreamEvent)) {

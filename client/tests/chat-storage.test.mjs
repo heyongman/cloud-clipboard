@@ -86,6 +86,53 @@ test('saveChatState 保存可恢复状态', () => {
   assert.deepEqual(restored, state);
 });
 
+test('saveChatState 保留图片附件和 assistant responseId', () => {
+  const storage = createMemoryStorage();
+  const state = loadChatState(storage, {
+    random: () => 0,
+    now: new Date('2026-05-08T00:00:00Z'),
+  });
+  state.conversations[0].messages.push(
+    {
+      id: 'msg_user',
+      role: 'user',
+      text: '看图',
+      attachments: [
+        {
+          id: 'att_image',
+          kind: 'image',
+          name: 'image.png',
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,abc',
+          sentToAi: true,
+        },
+      ],
+    },
+    {
+      id: 'msg_assistant',
+      role: 'assistant',
+      text: '图片里有文字。',
+      images: [
+        {
+          id: 'img_generated',
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,generated',
+        },
+      ],
+      completed: true,
+      responseId: 'resp_123',
+    },
+  );
+
+  saveChatState(storage, state);
+  const restored = loadChatState(storage);
+
+  assert.equal(restored.conversations[0].messages[0].attachments[0].dataUrl, 'data:image/png;base64,abc');
+  assert.equal(restored.conversations[0].messages[0].attachments[0].sentToAi, true);
+  assert.equal(restored.conversations[0].messages[1].images[0].dataUrl, 'data:image/png;base64,generated');
+  assert.equal(restored.conversations[0].messages[1].responseId, 'resp_123');
+});
+
 test('token 展示累计当前对话所有 input 和 output', () => {
   const usage = sumTokenUsage([
     { role: 'user', text: 'hello' },

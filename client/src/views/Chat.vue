@@ -706,6 +706,46 @@ export default {
             }
             return messages;
         },
+        buildLatestRequestMessages(assistantMessage) {
+            const messages = [];
+            const assistantIndex = this.activeConversation.messages.indexOf(assistantMessage);
+            if (assistantIndex > 0) {
+                const previousMessage = this.activeConversation.messages[assistantIndex - 1];
+                if (previousMessage?.role === 'user' && !previousMessage.failed && !previousMessage.streaming) {
+                    const content = [];
+                    if (previousMessage.text) {
+                        content.push({ type: 'text', text: previousMessage.text });
+                    }
+                    for (const attachment of previousMessage.attachments || []) {
+                        if (attachment.kind === 'image' && attachment.dataUrl && attachment.sentToAi) {
+                            content.push({
+                                type: 'image',
+                                mimeType: attachment.mimeType,
+                                dataUrl: attachment.dataUrl,
+                            });
+                        }
+                    }
+                    if (content.length) {
+                        messages.push({
+                            role: 'user',
+                            content,
+                        });
+                    }
+                }
+            }
+            return messages;
+        },
+        getPreviousResponseId(assistantMessage) {
+            const assistantIndex = this.activeConversation.messages.indexOf(assistantMessage);
+            if (assistantIndex <= 0) return '';
+            for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+                const message = this.activeConversation.messages[index];
+                if (message.role === 'assistant' && message.responseId && message.completed && !message.failed) {
+                    return message.responseId;
+                }
+            }
+            return '';
+        },
         async sendMessage() {
             if (!this.canSend || !this.activeConversation) return;
             if (!this.settings.hasApiKey && !this.settings.apiKey) {
@@ -752,6 +792,7 @@ export default {
             message.error = '';
             message.completed = false;
             this.$delete(message, 'usage');
+            this.$delete(message, 'responseId');
             this.persist();
             this.scrollToBottom();
             await this.startAssistantStream(message);
@@ -774,6 +815,8 @@ export default {
                         reasoningEffort: this.currentReasoningEffort || this.settings.defaultReasoningEffort,
                         rolePrompt: this.activeConversation.rolePrompt,
                         messages: this.buildRequestMessages(),
+                        latestMessages: this.buildLatestRequestMessages(assistantMessage),
+                        previousResponseId: this.getPreviousResponseId(assistantMessage),
                         tools: {
                             webSearch: this.activeConversation.webSearch,
                             imageGeneration: this.activeConversation.imageGeneration,
@@ -944,6 +987,9 @@ export default {
                 stream?.appendText(data.delta || '');
             } else if (eventName === 'complete') {
                 stream?.flushNow();
+                if (data.responseId) {
+                    this.$set(assistantMessage, 'responseId', data.responseId);
+                }
                 assistantMessage.completed = true;
             } else if (eventName === 'image') {
                 stream?.flushNow();

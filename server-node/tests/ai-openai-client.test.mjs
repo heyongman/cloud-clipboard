@@ -5,6 +5,7 @@ import {
     buildResponsesPayload,
     buildSummaryPayload,
     estimateMessagesTokens,
+    isPreviousResponseMissingError,
 } from '../app/ai/openai-client.js';
 import {
     getKnownModelContexts,
@@ -57,6 +58,33 @@ test('buildResponsesPayload 省略空可选字段', () => {
     assert.equal(payload.instructions, undefined);
     assert.equal(payload.reasoning, undefined);
     assert.equal(payload.tools, undefined);
+});
+
+test('buildResponsesPayload 支持 previous_response_id', () => {
+    const payload = buildResponsesPayload({
+        model: 'gpt-5',
+        previousResponseId: 'resp_123',
+        messages: [{ role: 'user', content: '继续' }],
+    });
+
+    assert.equal(payload.previous_response_id, 'resp_123');
+    assert.equal(payload.input.length, 1);
+});
+
+test('isPreviousResponseMissingError 只识别上游找不到 previous response 的错误', () => {
+    const missing = new Error('No response found for previous_response_id resp_missing');
+    missing.status = 404;
+    missing.body = {
+        error: {
+            message: 'No response found for previous_response_id resp_missing',
+        },
+    };
+
+    const other = new Error('model not found');
+    other.status = 404;
+
+    assert.equal(isPreviousResponseMissingError(missing), true);
+    assert.equal(isPreviousResponseMissingError(other), false);
 });
 
 test('buildSummaryPayload 使用非流式请求', () => {
