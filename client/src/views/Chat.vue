@@ -133,6 +133,9 @@
                                 <v-btn icon x-small title="复制Markdown" @click="copyMessageMarkdown(message)">
                                     <v-icon x-small>{{ mdiCodeTags }}</v-icon>
                                 </v-btn>
+                                <v-btn icon x-small title="删除消息" @click="deleteMessage(message)">
+                                    <v-icon x-small>{{ mdiDelete }}</v-icon>
+                                </v-btn>
                                 <v-btn
                                     v-if="message.role === 'assistant'"
                                     icon
@@ -302,15 +305,6 @@
                                 outlined
                                 dense
                                 label="默认模型"
-                            ></v-combobox>
-                        </v-col>
-                        <v-col cols="12" md="6">
-                            <v-combobox
-                                v-model="settings.summaryModel"
-                                :items="modelOptions"
-                                outlined
-                                dense
-                                label="摘要模型"
                             ></v-combobox>
                         </v-col>
                     </v-row>
@@ -703,7 +697,7 @@ export default {
             this.draftAttachments.push(...attachments);
             event.target.value = '';
         },
-        buildRequestMessages() {
+        buildRequestMessages(untilMessage = null) {
             const messages = [];
             if (this.activeConversation.summary) {
                 messages.push({
@@ -716,6 +710,7 @@ export default {
             }
 
             for (const message of this.activeConversation.messages) {
+                if (untilMessage && message === untilMessage) break;
                 if (message.failed || message.streaming) continue;
                 const content = [];
                 if (message.text) {
@@ -738,53 +733,6 @@ export default {
                 }
             }
             return messages;
-        },
-        buildLatestRequestMessages(assistantMessage) {
-            const messages = [];
-            const assistantIndex = this.activeConversation.messages.indexOf(assistantMessage);
-            if (assistantIndex > 0) {
-                const previousMessage = this.activeConversation.messages[assistantIndex - 1];
-                if (previousMessage?.role === 'user' && !previousMessage.failed && !previousMessage.streaming) {
-                    const content = [];
-                    if (previousMessage.text) {
-                        content.push({ type: 'text', text: previousMessage.text });
-                    }
-                    for (const attachment of previousMessage.attachments || []) {
-                        if (attachment.kind === 'image' && attachment.dataUrl && attachment.sentToAi) {
-                            content.push({
-                                type: 'image',
-                                mimeType: attachment.mimeType,
-                                dataUrl: attachment.dataUrl,
-                            });
-                        }
-                    }
-                    if (content.length) {
-                        messages.push({
-                            role: 'user',
-                            content,
-                        });
-                    }
-                }
-            }
-            return messages;
-        },
-        getPreviousResponseId(assistantMessage) {
-            const assistantIndex = this.activeConversation.messages.indexOf(assistantMessage);
-            if (assistantIndex <= 0) return '';
-            for (let index = assistantIndex - 1; index >= 0; index -= 1) {
-                const message = this.activeConversation.messages[index];
-                if (message.role === 'assistant' && message.responseId && message.completed && !message.failed) {
-                    return message.responseId;
-                }
-            }
-            return '';
-        },
-        isPreviousResponseErrorMessage(message) {
-            const value = `${message || ''}`.toLowerCase();
-            return value.includes('previous_response_id')
-                || value.includes('previous_response')
-                || value.includes('previous response')
-                || value.includes('no response found');
         },
         async sendMessage() {
             if (!this.canSend || !this.activeConversation) return;
@@ -837,17 +785,13 @@ export default {
             this.scrollToBottom();
             await this.startAssistantStream(message);
         },
-        async startAssistantStream(assistantMessage, { fullHistory = false } = {}) {
+        async startAssistantStream(assistantMessage) {
             this.sending = true;
             this.streamStoppedByUser = false;
             this.streamAbortController = new AbortController();
             assistantMessage.completed = false;
-            this.$delete(assistantMessage, 'previousResponseMissing');
             try {
                 const apiType = this.currentApiType || this.settings.apiType;
-                const previousResponseId = fullHistory || apiType !== 'responses'
-                    ? ''
-                    : this.getPreviousResponseId(assistantMessage);
                 const response = await fetch('ai/responses/stream', {
                     method: 'POST',
                     signal: this.streamAbortController.signal,
@@ -860,10 +804,7 @@ export default {
                         apiType,
                         reasoningEffort: this.currentReasoningEffort ?? this.settings.defaultReasoningEffort,
                         rolePrompt: this.activeConversation.rolePrompt,
-                        messages: fullHistory ? this.buildRequestMessages() : [],
-                        latestMessages: this.buildLatestRequestMessages(assistantMessage),
-                        previousResponseId,
-                        useFullHistory: fullHistory,
+                        messages: this.buildRequestMessages(assistantMessage),
                         tools: {
                             webSearch: this.activeConversation.webSearch,
                             imageGeneration: this.activeConversation.imageGeneration,
@@ -876,11 +817,6 @@ export default {
                 }
 
                 await this.consumeSse(response.body, assistantMessage);
-                if (assistantMessage.previousResponseMissing && apiType === 'responses' && !fullHistory && !this.streamStoppedByUser) {
-                    this.$delete(assistantMessage, 'previousResponseMissing');
-                    await this.startAssistantStream(assistantMessage, { fullHistory: true });
-                    return;
-                }
                 if (!assistantMessage.completed && !this.streamStoppedByUser && !assistantMessage.failed) {
                     assistantMessage.failed = true;
                     assistantMessage.error = 'AI 输出意外结束，请重试。';
@@ -1055,15 +991,8 @@ export default {
                     this.activeConversation.messages || [],
                     this.activeConversation.usage || {},
                 ));
-            } else if (eventName === 'previous_response_missing') {
-                stream?.flushNow();
-                this.$set(assistantMessage, 'previousResponseMissing', true);
             } else if (eventName === 'error') {
                 stream?.flushNow();
-                if (this.isPreviousResponseErrorMessage(data.message)) {
-                    this.$set(assistantMessage, 'previousResponseMissing', true);
-                    return;
-                }
                 assistantMessage.failed = true;
                 assistantMessage.error = data.message || 'AI请求失败';
             }
@@ -1075,6 +1004,20 @@ export default {
         async copyMessageMarkdown(message) {
             const result = await copyToClipboard(message.text || '');
             this.$toast(result.success ? '已复制Markdown' : '复制失败');
+        },
+        deleteMessage(message) {
+            if (!this.activeConversation) return;
+            const index = this.activeConversation.messages.indexOf(message);
+            if (index < 0) return;
+            if (message.streaming && this.streamAbortController) {
+                this.stopStreaming({ silent: true });
+            }
+            this.activeConversation.messages.splice(index, 1);
+            this.$set(this.activeConversation, 'usage', sumTokenUsage(
+                this.activeConversation.messages || [],
+                {},
+            ));
+            this.persist();
         },
         scrollToBottom() {
             this.$nextTick(() => {

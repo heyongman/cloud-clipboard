@@ -14,7 +14,6 @@ import {
     createStreamingResponse,
     createSummary,
     estimateMessagesTokens,
-    isPreviousResponseMissingError,
     listModels,
 } from './ai/openai-client.js';
 import {
@@ -323,35 +322,22 @@ router.post(
                 model: body.model || aiConfig.defaultModel,
                 reasoningEffort: body.reasoningEffort ?? aiConfig.defaultReasoningEffort,
                 rolePrompt: body.rolePrompt || '',
-                messages: apiType === 'responses' && !body.useFullHistory
-                    ? (body.latestMessages || body.messages || [])
-                    : (body.messages || body.latestMessages || []),
-                previousResponseId: apiType === 'responses' && !body.useFullHistory ? (body.previousResponseId || '') : '',
+                messages: body.messages || [],
                 tools: body.tools || {},
                 stream: true,
             };
-            let payload = apiType === 'completions'
+            const payload = apiType === 'completions'
                 ? buildCompletionsPayload(requestOptions)
                 : buildResponsesPayload(requestOptions);
             let upstream;
-            try {
-                if (apiType === 'completions') {
-                    upstream = await createStreamingCompletion(aiConfig, payload, {
-                        signal: abortController.signal,
-                    });
-                } else {
-                    upstream = await createStreamingResponse(aiConfig, payload, {
-                        signal: abortController.signal,
-                    });
-                }
-            } catch (error) {
-                if (!requestOptions.previousResponseId || !isPreviousResponseMissingError(error)) {
-                    throw error;
-                }
-                ctx.res.write(encodeSseEvent('previous_response_missing', {
-                    message: '上游无法找到 previous response，正在使用完整历史重试。',
-                }));
-                return;
+            if (apiType === 'completions') {
+                upstream = await createStreamingCompletion(aiConfig, payload, {
+                    signal: abortController.signal,
+                });
+            } else {
+                upstream = await createStreamingResponse(aiConfig, payload, {
+                    signal: abortController.signal,
+                });
             }
 
             for await (const upstreamEvent of parseSseStream(upstream.body)) {

@@ -75,7 +75,6 @@ export const buildResponsesPayload = ({
     reasoningEffort,
     rolePrompt,
     messages = [],
-    previousResponseId = '',
     tools = {},
     stream = true,
 }) => {
@@ -87,10 +86,6 @@ export const buildResponsesPayload = ({
 
     if (rolePrompt) {
         payload.instructions = rolePrompt;
-    }
-
-    if (previousResponseId) {
-        payload.previous_response_id = previousResponseId;
     }
 
     if (reasoningEffort) {
@@ -132,22 +127,6 @@ export const buildCompletionsPayload = ({
     }
 
     return payload;
-};
-
-export const isPreviousResponseMissingError = error => {
-    const values = [
-        error?.body?.error?.code,
-        error?.body?.error?.type,
-        error?.body?.error?.message,
-        error?.message,
-    ].filter(Boolean).map(value => `${value}`.toLowerCase());
-
-    return error?.status === 404 && values.some(value => (
-        value.includes('previous_response')
-        || value.includes('previous response')
-        || value.includes('no response found')
-        || (value.includes('response') && value.includes('not found'))
-    ));
 };
 
 const parseOpenAiJsonResponse = async response => {
