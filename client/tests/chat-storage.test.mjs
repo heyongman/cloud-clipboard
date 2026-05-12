@@ -32,7 +32,8 @@ test('createDefaultConversation 使用角色和默认模型', () => {
     role: DEFAULT_ROLES[1],
     defaults: {
       defaultModel: 'gpt-4.1',
-      defaultReasoningEffort: 'high',
+      apiType: 'completions',
+      defaultReasoningEffort: '',
     },
     now,
     random: () => 0,
@@ -40,7 +41,8 @@ test('createDefaultConversation 使用角色和默认模型', () => {
 
   assert.equal(conversation.roleId, 'programming');
   assert.equal(conversation.model, 'gpt-4.1');
-  assert.equal(conversation.reasoningEffort, 'high');
+  assert.equal(conversation.apiType, 'completions');
+  assert.equal(conversation.reasoningEffort, '');
   assert.equal(conversation.createdAt, now.getTime());
 });
 

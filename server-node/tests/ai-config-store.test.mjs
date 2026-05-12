@@ -27,8 +27,9 @@ test('readPublic 不暴露 API Key 明文', async () => {
     await store.save({
         apiKey: 'sk-test',
         apiBase: 'https://api.openai.com/v1/',
+        apiType: 'completions',
         defaultModel: 'gpt-5',
-        defaultReasoningEffort: 'high',
+        defaultReasoningEffort: '',
         summaryModel: 'gpt-5-mini',
     });
     const result = await store.readPublic();
@@ -36,6 +37,8 @@ test('readPublic 不暴露 API Key 明文', async () => {
     assert.equal(result.apiKey, undefined);
     assert.equal(result.hasApiKey, true);
     assert.equal(result.apiBase, 'https://api.openai.com/v1');
+    assert.equal(result.apiType, 'completions');
+    assert.equal(result.defaultReasoningEffort, '');
 });
 
 test('save 支持保留已有 API Key', async () => {
@@ -87,4 +90,5 @@ test('save 拒绝非法 API 地址与非法思考程度', async () => {
 
     await assert.rejects(() => store.save({ apiBase: 'not-a-url' }), /有效 URL/);
     await assert.rejects(() => store.save({ defaultReasoningEffort: 'extreme' }), /思考程度/);
+    await assert.rejects(() => store.save({ apiType: 'legacy' }), /接口类型/);
 });

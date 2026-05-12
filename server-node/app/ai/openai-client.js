@@ -40,11 +40,34 @@ const normalizeContentItem = item => {
     };
 };
 
+const normalizeCompletionContentItem = item => {
+    if (item?.type === 'image') {
+        return {
+            type: 'image_url',
+            image_url: {
+                url: item.dataUrl || item.imageUrl || '',
+            },
+        };
+    }
+
+    return {
+        type: 'text',
+        text: `${item?.text ?? ''}`,
+    };
+};
+
 const normalizeMessage = message => ({
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: Array.isArray(message.content)
         ? message.content.map(normalizeContentItem).filter(item => item.text || item.image_url)
         : [{ type: 'input_text', text: `${message.content ?? ''}` }],
+});
+
+const normalizeCompletionMessage = message => ({
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: Array.isArray(message.content)
+        ? message.content.map(normalizeCompletionContentItem).filter(item => item.text || item.image_url?.url)
+        : `${message.content ?? ''}`,
 });
 
 export const buildResponsesPayload = ({
@@ -83,6 +106,29 @@ export const buildResponsesPayload = ({
     }
     if (enabledTools.length) {
         payload.tools = enabledTools;
+    }
+
+    return payload;
+};
+
+export const buildCompletionsPayload = ({
+    model,
+    reasoningEffort,
+    rolePrompt,
+    messages = [],
+    stream = true,
+}) => {
+    const payload = {
+        model,
+        stream,
+        messages: [
+            ...(rolePrompt ? [{ role: 'system', content: rolePrompt }] : []),
+            ...messages.map(normalizeCompletionMessage),
+        ],
+    };
+
+    if (reasoningEffort) {
+        payload.reasoning_effort = reasoningEffort;
     }
 
     return payload;
@@ -141,6 +187,21 @@ export const listModels = async config => {
 
 export const createStreamingResponse = async (config, payload, options = {}) => {
     const response = await fetch(buildOpenAiUrl(config.apiBase, '/responses'), {
+        method: 'POST',
+        headers: createOpenAiHeaders(config),
+        body: JSON.stringify(payload),
+        signal: options.signal,
+    });
+
+    if (!response.ok) {
+        await parseOpenAiJsonResponse(response);
+    }
+
+    return response;
+};
+
+export const createStreamingCompletion = async (config, payload, options = {}) => {
+    const response = await fetch(buildOpenAiUrl(config.apiBase, '/chat/completions'), {
         method: 'POST',
         headers: createOpenAiHeaders(config),
         body: JSON.stringify(payload),

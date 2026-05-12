@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    buildCompletionsPayload,
     buildResponsesPayload,
     buildSummaryPayload,
     estimateMessagesTokens,
@@ -69,6 +70,32 @@ test('buildResponsesPayload 支持 previous_response_id', () => {
 
     assert.equal(payload.previous_response_id, 'resp_123');
     assert.equal(payload.input.length, 1);
+});
+
+test('buildCompletionsPayload 转换系统提示、文本、图片和 reasoning_effort', () => {
+    const payload = buildCompletionsPayload({
+        model: 'gpt-4o',
+        reasoningEffort: 'low',
+        rolePrompt: 'You are helpful.',
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    { type: 'text', text: '看图' },
+                    { type: 'image', dataUrl: 'data:image/png;base64,abc' },
+                ],
+            },
+        ],
+    });
+
+    assert.equal(payload.model, 'gpt-4o');
+    assert.equal(payload.stream, true);
+    assert.equal(payload.reasoning_effort, 'low');
+    assert.deepEqual(payload.messages[0], { role: 'system', content: 'You are helpful.' });
+    assert.deepEqual(payload.messages[1].content, [
+        { type: 'text', text: '看图' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+    ]);
 });
 
 test('isPreviousResponseMissingError 只识别上游找不到 previous response 的错误', () => {

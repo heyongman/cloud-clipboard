@@ -105,6 +105,21 @@ export const normalizeOpenAiSseEvent = ({ event, data }) => {
     const body = parseJson(data);
     if (!body) return [];
 
+    if (body.object === 'chat.completion.chunk') {
+        const events = [];
+        const delta = (body.choices || [])
+            .map(choice => choice.delta?.content || '')
+            .join('');
+        if (delta) {
+            events.push({ event: 'text_delta', data: { delta } });
+        }
+        if ((body.choices || []).some(choice => choice.finish_reason)) {
+            events.push({ event: 'usage', data: normalizeUsage(body.usage) });
+            events.push({ event: 'complete', data: { responseId: body.id || '' } });
+        }
+        return events;
+    }
+
     if (event === 'response.output_text.delta' || body.type === 'response.output_text.delta') {
         return [{ event: 'text_delta', data: { delta: body.delta || '' } }];
     }

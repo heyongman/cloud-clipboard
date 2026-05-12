@@ -52,6 +52,15 @@
                             class="mt-2"
                         ></v-combobox>
                         <v-select
+                            v-model="currentApiType"
+                            :items="apiTypeOptions"
+                            dense
+                            outlined
+                            hide-details
+                            label="接口"
+                            class="mt-2"
+                        ></v-select>
+                        <v-select
                             v-model="currentReasoningEffort"
                             :items="reasoningOptions"
                             dense
@@ -161,6 +170,7 @@
                         auto-grow
                         rows="3"
                         row-height="22"
+                        class="composer-input"
                         hide-details
                         placeholder="Enter 换行，Ctrl+Enter 发送。可直接粘贴图片。"
                         @keydown.ctrl.enter.prevent="sendMessage"
@@ -305,6 +315,13 @@
                         </v-col>
                     </v-row>
                     <v-select
+                        v-model="settings.apiType"
+                        :items="apiTypeOptions"
+                        outlined
+                        dense
+                        label="默认接口"
+                    ></v-select>
+                    <v-select
                         v-model="settings.defaultReasoningEffort"
                         :items="reasoningOptions"
                         outlined
@@ -399,15 +416,22 @@ export default {
                 apiBase: 'https://api.openai.com/v1',
                 apiKey: '',
                 hasApiKey: false,
+                apiType: 'responses',
                 defaultModel: 'gpt-5',
-                defaultReasoningEffort: 'medium',
+                defaultReasoningEffort: '',
                 summaryModel: 'gpt-5-mini',
                 cachedModels: [],
             },
             currentModel: 'gpt-5',
-            currentReasoningEffort: 'medium',
+            currentApiType: 'responses',
+            currentReasoningEffort: '',
             modelIds: [],
+            apiTypeOptions: [
+                { text: 'Responses', value: 'responses' },
+                { text: 'Completions', value: 'completions' },
+            ],
             reasoningOptions: [
+                { text: '不填', value: '' },
                 { text: '低', value: 'low' },
                 { text: '中', value: 'medium' },
                 { text: '高', value: 'high' },
@@ -550,7 +574,8 @@ export default {
                 this.applyModelCache(result.cachedModels || []);
                 if (resetRuntime) {
                     this.currentModel = result.defaultModel || this.currentModel;
-                    this.currentReasoningEffort = result.defaultReasoningEffort || this.currentReasoningEffort;
+                    this.currentApiType = result.apiType || this.currentApiType;
+                    this.currentReasoningEffort = result.defaultReasoningEffort ?? this.currentReasoningEffort;
                 }
             } catch (error) {
                 console.error(error);
@@ -571,7 +596,8 @@ export default {
                 };
                 this.applyModelCache(result.cachedModels || []);
                 this.currentModel = result.defaultModel || this.currentModel;
-                this.currentReasoningEffort = result.defaultReasoningEffort || this.currentReasoningEffort;
+                this.currentApiType = result.apiType || this.currentApiType;
+                this.currentReasoningEffort = result.defaultReasoningEffort ?? this.currentReasoningEffort;
                 this.settingsDialog = false;
                 this.$toast('AI设置已保存');
             } catch (error) {
@@ -818,7 +844,10 @@ export default {
             assistantMessage.completed = false;
             this.$delete(assistantMessage, 'previousResponseMissing');
             try {
-                const previousResponseId = fullHistory ? '' : this.getPreviousResponseId(assistantMessage);
+                const apiType = this.currentApiType || this.settings.apiType;
+                const previousResponseId = fullHistory || apiType !== 'responses'
+                    ? ''
+                    : this.getPreviousResponseId(assistantMessage);
                 const response = await fetch('ai/responses/stream', {
                     method: 'POST',
                     signal: this.streamAbortController.signal,
@@ -828,7 +857,8 @@ export default {
                     },
                     body: JSON.stringify({
                         model: this.currentModel || this.settings.defaultModel,
-                        reasoningEffort: this.currentReasoningEffort || this.settings.defaultReasoningEffort,
+                        apiType,
+                        reasoningEffort: this.currentReasoningEffort ?? this.settings.defaultReasoningEffort,
                         rolePrompt: this.activeConversation.rolePrompt,
                         messages: fullHistory ? this.buildRequestMessages() : [],
                         latestMessages: this.buildLatestRequestMessages(assistantMessage),
@@ -846,7 +876,7 @@ export default {
                 }
 
                 await this.consumeSse(response.body, assistantMessage);
-                if (assistantMessage.previousResponseMissing && !fullHistory && !this.streamStoppedByUser) {
+                if (assistantMessage.previousResponseMissing && apiType === 'responses' && !fullHistory && !this.streamStoppedByUser) {
                     this.$delete(assistantMessage, 'previousResponseMissing');
                     await this.startAssistantStream(assistantMessage, { fullHistory: true });
                     return;
@@ -1287,6 +1317,11 @@ export default {
 .composer {
     border-top: 1px solid rgba(127, 127, 127, 0.22);
     padding: 12px 16px 16px;
+}
+
+.composer-input >>> textarea {
+    max-height: 180px;
+    overflow-y: auto;
 }
 
 .draft-attachments {

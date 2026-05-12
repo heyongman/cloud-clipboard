@@ -44,6 +44,23 @@ test('normalizeOpenAiSseEvent 规范化文本和完成事件', () => {
     ]);
 });
 
+test('normalizeOpenAiSseEvent 规范化 chat completions 流式事件', () => {
+    const textEvents = normalizeOpenAiSseEvent({
+        event: 'message',
+        data: '{"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}]}',
+    });
+    const doneEvents = normalizeOpenAiSseEvent({
+        event: 'message',
+        data: '{"id":"chatcmpl_1","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}',
+    });
+
+    assert.deepEqual(textEvents, [{ event: 'text_delta', data: { delta: 'hi' } }]);
+    assert.deepEqual(doneEvents, [
+        { event: 'usage', data: { inputTokens: 3, outputTokens: 4, totalTokens: 7 } },
+        { event: 'complete', data: { responseId: 'chatcmpl_1' } },
+    ]);
+});
+
 test('normalizeOpenAiSseEvent 规范化图片生成结果', () => {
     const events = normalizeOpenAiSseEvent({
         event: 'response.output_item.done',

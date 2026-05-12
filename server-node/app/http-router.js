@@ -7,8 +7,10 @@ import config from './config.js';
 import { createAiConfigStore, normalizeAiConfig } from './ai/config-store.js';
 import { getKnownModelContexts } from './ai/model-context.js';
 import {
+    buildCompletionsPayload,
     buildResponsesPayload,
     buildSummaryPayload,
+    createStreamingCompletion,
     createStreamingResponse,
     createSummary,
     estimateMessagesTokens,
@@ -316,21 +318,32 @@ router.post(
         try {
             const aiConfig = await aiConfigStore.read();
             const body = ctx.request.body || {};
+            const apiType = body.apiType || aiConfig.apiType || 'responses';
             const requestOptions = {
                 model: body.model || aiConfig.defaultModel,
-                reasoningEffort: body.reasoningEffort || aiConfig.defaultReasoningEffort,
+                reasoningEffort: body.reasoningEffort ?? aiConfig.defaultReasoningEffort,
                 rolePrompt: body.rolePrompt || '',
-                messages: body.useFullHistory ? (body.messages || []) : (body.latestMessages || body.messages || []),
-                previousResponseId: body.useFullHistory ? '' : (body.previousResponseId || ''),
+                messages: apiType === 'responses' && !body.useFullHistory
+                    ? (body.latestMessages || body.messages || [])
+                    : (body.messages || body.latestMessages || []),
+                previousResponseId: apiType === 'responses' && !body.useFullHistory ? (body.previousResponseId || '') : '',
                 tools: body.tools || {},
                 stream: true,
             };
-            let payload = buildResponsesPayload(requestOptions);
+            let payload = apiType === 'completions'
+                ? buildCompletionsPayload(requestOptions)
+                : buildResponsesPayload(requestOptions);
             let upstream;
             try {
-                upstream = await createStreamingResponse(aiConfig, payload, {
-                    signal: abortController.signal,
-                });
+                if (apiType === 'completions') {
+                    upstream = await createStreamingCompletion(aiConfig, payload, {
+                        signal: abortController.signal,
+                    });
+                } else {
+                    upstream = await createStreamingResponse(aiConfig, payload, {
+                        signal: abortController.signal,
+                    });
+                }
             } catch (error) {
                 if (!requestOptions.previousResponseId || !isPreviousResponseMissingError(error)) {
                     throw error;

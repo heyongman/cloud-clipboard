@@ -4,6 +4,7 @@ import path from 'node:path';
 export const DEFAULT_AI_CONFIG = {
     apiBase: 'https://api.openai.com/v1',
     apiKey: '',
+    apiType: 'responses',
     defaultModel: 'gpt-5',
     defaultReasoningEffort: 'medium',
     summaryModel: 'gpt-5-mini',
@@ -11,6 +12,7 @@ export const DEFAULT_AI_CONFIG = {
 };
 
 const REASONING_EFFORTS = new Set(['', 'low', 'medium', 'high']);
+const API_TYPES = new Set(['responses', 'completions']);
 
 const normalizeString = value => `${value ?? ''}`.trim();
 
@@ -62,9 +64,16 @@ const normalizeCachedModels = value => {
 
 export const normalizeAiConfig = (input = {}, previous = DEFAULT_AI_CONFIG) => {
     const defaultReasoningEffort = normalizeString(input.defaultReasoningEffort ?? previous.defaultReasoningEffort);
+    const apiType = normalizeString(input.apiType ?? previous.apiType) || DEFAULT_AI_CONFIG.apiType;
 
     if (!REASONING_EFFORTS.has(defaultReasoningEffort)) {
-        const error = new Error('思考程度只能是 low、medium 或 high');
+        const error = new Error('思考程度只能为空、low、medium 或 high');
+        error.status = 400;
+        throw error;
+    }
+
+    if (!API_TYPES.has(apiType)) {
+        const error = new Error('接口类型只能是 responses 或 completions');
         error.status = 400;
         throw error;
     }
@@ -75,8 +84,9 @@ export const normalizeAiConfig = (input = {}, previous = DEFAULT_AI_CONFIG) => {
     return {
         apiBase: normalizeApiBase(input.apiBase ?? previous.apiBase),
         apiKey,
+        apiType,
         defaultModel: normalizeString(input.defaultModel ?? previous.defaultModel) || DEFAULT_AI_CONFIG.defaultModel,
-        defaultReasoningEffort: defaultReasoningEffort || DEFAULT_AI_CONFIG.defaultReasoningEffort,
+        defaultReasoningEffort,
         summaryModel: normalizeString(input.summaryModel ?? previous.summaryModel) || DEFAULT_AI_CONFIG.summaryModel,
         cachedModels: normalizeCachedModels(input.cachedModels ?? previous.cachedModels),
     };
