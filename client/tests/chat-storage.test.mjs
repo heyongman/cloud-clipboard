@@ -5,6 +5,8 @@ import {
   CHAT_STORAGE_KEY,
   DEFAULT_ROLES,
   createDefaultConversation,
+  collectChatImageAssets,
+  createSerializableChatState,
   deriveConversationTitle,
   loadChatState,
   saveChatState,
@@ -88,7 +90,7 @@ test('saveChatState 保存可恢复状态', () => {
   assert.deepEqual(restored, state);
 });
 
-test('saveChatState 保留图片附件和 assistant responseId', () => {
+test('saveChatState 将图片内容从 localStorage 状态中剥离', () => {
   const storage = createMemoryStorage();
   const state = loadChatState(storage, {
     random: () => 0,
@@ -129,10 +131,63 @@ test('saveChatState 保留图片附件和 assistant responseId', () => {
   saveChatState(storage, state);
   const restored = loadChatState(storage);
 
-  assert.equal(restored.conversations[0].messages[0].attachments[0].dataUrl, 'data:image/png;base64,abc');
+  assert.equal(restored.conversations[0].messages[0].attachments[0].dataUrl, undefined);
+  assert.equal(restored.conversations[0].messages[0].attachments[0].hasData, true);
+  assert.match(restored.conversations[0].messages[0].attachments[0].assetId, /^attachment:/);
   assert.equal(restored.conversations[0].messages[0].attachments[0].sentToAi, true);
-  assert.equal(restored.conversations[0].messages[1].images[0].dataUrl, 'data:image/png;base64,generated');
+  assert.equal(restored.conversations[0].messages[1].images[0].dataUrl, undefined);
+  assert.equal(restored.conversations[0].messages[1].images[0].hasData, true);
+  assert.match(restored.conversations[0].messages[1].images[0].assetId, /^generated:/);
   assert.equal(restored.conversations[0].messages[1].responseId, 'resp_123');
+
+  const raw = storage.getItem(CHAT_STORAGE_KEY);
+  assert.equal(raw.includes('data:image/png;base64'), false);
+});
+
+test('collectChatImageAssets 收集用户图片和生成图片用于 IndexedDB', () => {
+  const state = loadChatState(createMemoryStorage(), {
+    random: () => 0,
+    now: new Date('2026-05-08T00:00:00Z'),
+  });
+  state.conversations[0].messages.push(
+    {
+      id: 'msg_user',
+      role: 'user',
+      text: '看图',
+      attachments: [
+        {
+          id: 'att_image',
+          kind: 'image',
+          name: 'image.png',
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,abc',
+          sentToAi: true,
+        },
+      ],
+    },
+    {
+      id: 'msg_assistant',
+      role: 'assistant',
+      text: '完成。',
+      images: [
+        {
+          id: 'img_generated',
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,generated',
+        },
+      ],
+    },
+  );
+
+  const assets = collectChatImageAssets(state);
+  const serializable = createSerializableChatState(state);
+
+  assert.equal(assets.length, 2);
+  assert.deepEqual(assets.map(item => item.dataUrl), [
+    'data:image/png;base64,abc',
+    'data:image/png;base64,generated',
+  ]);
+  assert.equal(JSON.stringify(serializable).includes('data:image/png;base64'), false);
 });
 
 test('token 展示累计当前对话所有 input 和 output', () => {

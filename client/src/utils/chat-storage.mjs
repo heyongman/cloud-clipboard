@@ -1,5 +1,11 @@
 export const CHAT_STORAGE_KEY = 'cloudClipboard.aiChat.v1';
 
+const CHAT_ASSET_DB_NAME = 'cloudClipboard.aiChat.assets';
+const CHAT_ASSET_STORE_NAME = 'assets';
+const DATA_URL_PREFIX = 'data:';
+
+let chatAssetDbPromise = null;
+
 export const DEFAULT_ROLES = [
     {
         id: 'audit-us-stocks',
@@ -104,6 +110,166 @@ const normalizeState = value => {
     };
 };
 
+const isDataUrl = value => typeof value === 'string' && value.startsWith(DATA_URL_PREFIX);
+
+const createAssetId = (...parts) => parts
+    .filter(part => part !== undefined && part !== null && part !== '')
+    .map(part => encodeURIComponent(`${part}`))
+    .join(':');
+
+const ensureChatImageAssetIds = state => {
+    for (const conversation of state?.conversations || []) {
+        for (const message of conversation.messages || []) {
+            for (const attachment of message.attachments || []) {
+                if (attachment.kind === 'image' && (attachment.dataUrl || attachment.assetId)) {
+                    attachment.assetId = attachment.assetId || createAssetId('attachment', conversation.id, message.id, attachment.id);
+                }
+            }
+            for (const image of message.images || []) {
+                if (image.dataUrl || image.assetId) {
+                    image.assetId = image.assetId || createAssetId('generated', conversation.id, message.id, image.id);
+                }
+            }
+        }
+    }
+};
+
+export const createSerializableChatState = state => {
+    const normalized = normalizeState(state);
+    if (!normalized) return null;
+
+    ensureChatImageAssetIds(normalized);
+    const serializable = JSON.parse(JSON.stringify(normalized));
+    for (const conversation of serializable.conversations || []) {
+        for (const message of conversation.messages || []) {
+            for (const attachment of message.attachments || []) {
+                if (attachment.kind === 'image' && isDataUrl(attachment.dataUrl)) {
+                    attachment.hasData = true;
+                    delete attachment.dataUrl;
+                }
+            }
+            for (const image of message.images || []) {
+                if (isDataUrl(image.dataUrl)) {
+                    image.hasData = true;
+                    delete image.dataUrl;
+                }
+            }
+        }
+    }
+    return serializable;
+};
+
+export const collectChatImageAssets = state => {
+    const normalized = normalizeState(state);
+    if (!normalized) return [];
+
+    ensureChatImageAssetIds(normalized);
+    const assets = [];
+    for (const conversation of normalized.conversations || []) {
+        for (const message of conversation.messages || []) {
+            for (const attachment of message.attachments || []) {
+                if (attachment.kind === 'image' && attachment.assetId && isDataUrl(attachment.dataUrl)) {
+                    assets.push({
+                        id: attachment.assetId,
+                        dataUrl: attachment.dataUrl,
+                        mimeType: attachment.mimeType || '',
+                        updatedAt: Date.now(),
+                    });
+                }
+            }
+            for (const image of message.images || []) {
+                if (image.assetId && isDataUrl(image.dataUrl)) {
+                    assets.push({
+                        id: image.assetId,
+                        dataUrl: image.dataUrl,
+                        mimeType: image.mimeType || '',
+                        updatedAt: Date.now(),
+                    });
+                }
+            }
+        }
+    }
+    return assets;
+};
+
+const openChatAssetDb = () => {
+    if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    if (chatAssetDbPromise) return chatAssetDbPromise;
+
+    chatAssetDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(CHAT_ASSET_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(CHAT_ASSET_STORE_NAME)) {
+                db.createObjectStore(CHAT_ASSET_STORE_NAME, { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('打开聊天图片缓存失败'));
+    });
+    return chatAssetDbPromise;
+};
+
+const putChatAsset = async asset => {
+    const db = await openChatAssetDb();
+    if (!db) return;
+    await new Promise((resolve, reject) => {
+        const transaction = db.transaction(CHAT_ASSET_STORE_NAME, 'readwrite');
+        transaction.objectStore(CHAT_ASSET_STORE_NAME).put(asset);
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error || new Error('保存聊天图片缓存失败'));
+        transaction.onabort = () => reject(transaction.error || new Error('保存聊天图片缓存已取消'));
+    });
+};
+
+const getChatAsset = async id => {
+    const db = await openChatAssetDb();
+    if (!db || !id) return null;
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(CHAT_ASSET_STORE_NAME, 'readonly');
+        const request = transaction.objectStore(CHAT_ASSET_STORE_NAME).get(id);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error || new Error('读取聊天图片缓存失败'));
+    });
+};
+
+export const saveChatAssets = async state => {
+    const assets = collectChatImageAssets(state);
+    await Promise.all(assets.map(asset => putChatAsset(asset)));
+    return assets.length;
+};
+
+export const hydrateChatStateAssets = async state => {
+    const normalized = normalizeState(state);
+    if (!normalized) return state;
+
+    ensureChatImageAssetIds(normalized);
+    const targets = [];
+    for (const conversation of normalized.conversations || []) {
+        for (const message of conversation.messages || []) {
+            for (const attachment of message.attachments || []) {
+                if (attachment.kind === 'image' && attachment.assetId && !attachment.dataUrl) {
+                    targets.push(attachment);
+                }
+            }
+            for (const image of message.images || []) {
+                if (image.assetId && !image.dataUrl) {
+                    targets.push(image);
+                }
+            }
+        }
+    }
+
+    await Promise.all(targets.map(async target => {
+        const asset = await getChatAsset(target.assetId);
+        if (asset?.dataUrl) {
+            target.dataUrl = asset.dataUrl;
+            target.mimeType = target.mimeType || asset.mimeType || '';
+        }
+    }));
+    return state;
+};
+
 export const loadChatState = (storage, options = {}) => {
     try {
         const raw = storage?.getItem(CHAT_STORAGE_KEY);
@@ -115,12 +281,12 @@ export const loadChatState = (storage, options = {}) => {
 };
 
 export const saveChatState = (storage, state) => {
-    const normalized = normalizeState(state);
-    if (!normalized) {
+    const serializable = createSerializableChatState(state);
+    if (!serializable) {
         throw new Error('聊天状态无效');
     }
-    storage?.setItem(CHAT_STORAGE_KEY, JSON.stringify(normalized));
-    return normalized;
+    storage?.setItem(CHAT_STORAGE_KEY, JSON.stringify(serializable));
+    return serializable;
 };
 
 export const getActiveConversation = state => (

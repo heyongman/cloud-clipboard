@@ -362,7 +362,9 @@ import {
     createDefaultConversation,
     deriveConversationTitle,
     getActiveConversation,
+    hydrateChatStateAssets,
     loadChatState,
+    saveChatAssets,
     saveChatState,
 } from '@/utils/chat-storage.mjs';
 import {
@@ -432,6 +434,7 @@ export default {
             ],
             draftText: '',
             draftAttachments: [],
+            chatAssetsReady: false,
             sending: false,
             settingsDialog: false,
             settingsSaving: false,
@@ -460,7 +463,7 @@ export default {
             return Array.from(ids).sort((a, b) => a.localeCompare(b));
         },
         canSend() {
-            return !this.sending && (!!this.draftText.trim() || this.draftAttachments.length > 0);
+            return this.chatAssetsReady && !this.sending && (!!this.draftText.trim() || this.draftAttachments.length > 0);
         },
         tokenUsageText() {
             return formatTokenUsage(sumTokenUsage(
@@ -481,11 +484,12 @@ export default {
             }
         },
     },
-    mounted() {
+    async mounted() {
         this.chatState = loadChatState(localStorage, {
             defaults: this.settings,
             initialConversation: false,
         });
+        await this.restoreChatAssets();
         this.recoverInterruptedMessages();
         this.loadMarkdown();
         this.loadSettings({ resetRuntime: true });
@@ -537,7 +541,29 @@ export default {
             if (this.activeConversation) {
                 this.activeConversation.updatedAt = Date.now();
             }
+            saveChatAssets(this.chatState).catch(error => {
+                console.error(error);
+            });
             saveChatState(localStorage, this.chatState);
+        },
+        async persistWithAssets() {
+            if (this.activeConversation) {
+                this.activeConversation.updatedAt = Date.now();
+            }
+            await saveChatAssets(this.chatState);
+            saveChatState(localStorage, this.chatState);
+        },
+        async restoreChatAssets() {
+            try {
+                await hydrateChatStateAssets(this.chatState);
+                await saveChatAssets(this.chatState);
+                saveChatState(localStorage, this.chatState);
+                this.$forceUpdate();
+            } catch (error) {
+                console.error(error);
+            } finally {
+                this.chatAssetsReady = true;
+            }
         },
         recoverInterruptedMessages() {
             let changed = false;
@@ -731,6 +757,25 @@ export default {
                         content,
                     });
                 }
+                const generatedImages = (message.images || [])
+                    .filter(image => image.dataUrl)
+                    .map(image => ({
+                        type: 'image',
+                        mimeType: image.mimeType,
+                        dataUrl: image.dataUrl,
+                    }));
+                if (generatedImages.length) {
+                    messages.push({
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'text',
+                                text: '以下是上一轮助手生成的图片，用于延续后续对话上下文。',
+                            },
+                            ...generatedImages,
+                        ],
+                    });
+                }
             }
             return messages;
         },
@@ -835,7 +880,7 @@ export default {
                 this.sending = false;
                 this.streamAbortController = null;
                 this.streamStoppedByUser = false;
-                this.persist();
+                await this.persistWithAssets();
             }
         },
         stopStreaming({ silent = false } = {}) {
