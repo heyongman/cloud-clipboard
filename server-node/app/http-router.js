@@ -47,6 +47,23 @@ const subscriptionStore = createSubscriptionConfigStore({
 const aiConfigStore = createAiConfigStore({
     filePath: aiConfigPath,
 });
+
+const waitForDrainOrClose = res => new Promise(resolve => {
+    const cleanup = () => {
+        res.off('drain', onDrain);
+        res.off('close', onClose);
+    };
+    const onDrain = () => {
+        cleanup();
+        resolve();
+    };
+    const onClose = () => {
+        cleanup();
+        resolve();
+    };
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+});
 const subscriptionCache = createSubscriptionCache({
     ttlMs: 30 * 1000,
 });
@@ -305,14 +322,22 @@ router.post(
     }),
     async ctx => {
         ctx.respond = false;
+        ctx.compress = false;
         ctx.res.statusCode = 200;
         ctx.res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         ctx.res.setHeader('Cache-Control', 'no-cache, no-transform');
         ctx.res.setHeader('Connection', 'keep-alive');
+        ctx.res.setHeader('X-Accel-Buffering', 'no');
+        ctx.res.flushHeaders?.();
 
         const abortController = new AbortController();
         const abortUpstream = () => abortController.abort();
         ctx.res.on('close', abortUpstream);
+        const writeSse = async (event, data) => {
+            if (ctx.res.destroyed) return;
+            if (ctx.res.write(encodeSseEvent(event, data))) return;
+            await waitForDrainOrClose(ctx.res);
+        };
 
         try {
             const aiConfig = await aiConfigStore.read();
@@ -342,14 +367,14 @@ router.post(
 
             for await (const upstreamEvent of parseSseStream(upstream.body)) {
                 for (const downstreamEvent of normalizeOpenAiSseEvent(upstreamEvent)) {
-                    ctx.res.write(encodeSseEvent(downstreamEvent.event, downstreamEvent.data));
+                    await writeSse(downstreamEvent.event, downstreamEvent.data);
                 }
             }
         } catch (error) {
             if (error.name !== 'AbortError' && !ctx.res.destroyed) {
-                ctx.res.write(encodeSseEvent('error', {
+                await writeSse('error', {
                     message: error.message || 'AI 请求失败',
-                }));
+                });
             }
         } finally {
             ctx.res.off('close', abortUpstream);

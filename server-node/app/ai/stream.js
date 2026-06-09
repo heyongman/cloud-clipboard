@@ -31,6 +31,7 @@ export async function* parseSseStream(readable) {
                 yield* emit();
                 continue;
             }
+            console.log(line)
             if (line.startsWith('event:')) {
                 event = line.slice(6).trim();
                 continue;

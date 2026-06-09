@@ -139,6 +139,8 @@ test('saveChatState 将图片内容从 localStorage 状态中剥离', () => {
   assert.equal(restored.conversations[0].messages[1].images[0].hasData, true);
   assert.match(restored.conversations[0].messages[1].images[0].assetId, /^generated:/);
   assert.equal(restored.conversations[0].messages[1].responseId, 'resp_123');
+  assert.equal(state.conversations[0].messages[0].attachments[0].dataUrl, 'data:image/png;base64,abc');
+  assert.equal(state.conversations[0].messages[1].images[0].dataUrl, 'data:image/png;base64,generated');
 
   const raw = storage.getItem(CHAT_STORAGE_KEY);
   assert.equal(raw.includes('data:image/png;base64'), false);

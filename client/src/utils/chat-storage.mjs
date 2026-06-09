@@ -139,24 +139,36 @@ export const createSerializableChatState = state => {
     if (!normalized) return null;
 
     ensureChatImageAssetIds(normalized);
-    const serializable = JSON.parse(JSON.stringify(normalized));
-    for (const conversation of serializable.conversations || []) {
-        for (const message of conversation.messages || []) {
-            for (const attachment of message.attachments || []) {
-                if (attachment.kind === 'image' && isDataUrl(attachment.dataUrl)) {
-                    attachment.hasData = true;
-                    delete attachment.dataUrl;
-                }
-            }
-            for (const image of message.images || []) {
-                if (isDataUrl(image.dataUrl)) {
-                    image.hasData = true;
-                    delete image.dataUrl;
-                }
-            }
-        }
-    }
-    return serializable;
+    return {
+        version: normalized.version,
+        activeId: normalized.activeId,
+        conversations: (normalized.conversations || []).map(conversation => ({
+            ...conversation,
+            messages: (conversation.messages || []).map(message => ({
+                ...message,
+                attachments: (message.attachments || []).map(attachment => {
+                    if (attachment.kind !== 'image' || !isDataUrl(attachment.dataUrl)) {
+                        return { ...attachment };
+                    }
+                    const { dataUrl, ...serializableAttachment } = attachment;
+                    return {
+                        ...serializableAttachment,
+                        hasData: true,
+                    };
+                }),
+                images: (message.images || []).map(image => {
+                    if (!isDataUrl(image.dataUrl)) {
+                        return { ...image };
+                    }
+                    const { dataUrl, ...serializableImage } = image;
+                    return {
+                        ...serializableImage,
+                        hasData: true,
+                    };
+                }),
+            })),
+        })),
+    };
 };
 
 export const collectChatImageAssets = state => {

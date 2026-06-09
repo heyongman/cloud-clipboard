@@ -100,7 +100,7 @@
                             <div
                                 v-if="message.text"
                                 class="markdown-body"
-                                v-html="renderMarkdown(message.text)"
+                                v-html="renderMessageMarkdown(message)"
                             ></div>
                             <div v-if="message.attachments && message.attachments.length" class="attachment-grid mt-2">
                                 <div
@@ -377,7 +377,16 @@ const createMessageId = () => `msg_${Date.now().toString(36)}_${Math.floor(Math.
 const createAttachmentId = () => `att_${Date.now().toString(36)}_${Math.floor(Math.random() * 0xffffff).toString(36)}`;
 const STREAM_FLUSH_INTERVAL_MS = 120;
 const STREAM_IDLE_TIMEOUT_MS = 90000;
+const STREAM_PARSE_BATCH_LINES = 160;
+const STREAM_PARSE_MAX_SYNC_MS = 16;
 const SCROLL_FOLLOW_THRESHOLD_PX = 80;
+const waitForMainThread = () => new Promise(resolve => setTimeout(resolve, 0));
+
+const createAbortError = () => {
+    const error = new Error('AI 输出已终止。');
+    error.name = 'AbortError';
+    return error;
+};
 
 export default {
     data() {
@@ -441,6 +450,7 @@ export default {
             modelLoading: false,
             showApiKey: false,
             markdownParser: null,
+            markdownRenderCache: new Map(),
             streamAbortController: null,
             streamStoppedByUser: false,
             streamShouldFollow: false,
@@ -526,6 +536,21 @@ export default {
                     .replace(/\n/g, '<br>');
             }
             return this.markdownParser.render(text || '');
+        },
+        renderMessageMarkdown(message) {
+            const cacheKey = message.id || '';
+            const text = message.text || '';
+            const parserReady = !!this.markdownParser;
+            const cached = this.markdownRenderCache.get(cacheKey);
+            if (cached && cached.text === text && cached.parserReady === parserReady) {
+                return cached.html;
+            }
+            const html = this.renderMarkdown(text);
+            if (this.markdownRenderCache.size > 100) {
+                this.markdownRenderCache.delete(this.markdownRenderCache.keys().next().value);
+            }
+            this.markdownRenderCache.set(cacheKey, { text, parserReady, html });
+            return html;
         },
         renderPlainText(text) {
             const value = `${text || ''}`;
@@ -900,6 +925,8 @@ export default {
             let pendingDelta = '';
             let flushTimer = null;
             let scrollTimer = null;
+            let processedLines = 0;
+            let batchStartedAt = performance.now();
             this.streamShouldFollow = this.isMessageScrollerNearBottom();
 
             const scheduleScroll = () => {
@@ -914,6 +941,10 @@ export default {
             };
 
             const flushPending = () => {
+                if (flushTimer) {
+                    clearTimeout(flushTimer);
+                    flushTimer = null;
+                }
                 if (pendingDelta) {
                     assistantMessage.text += pendingDelta;
                     pendingDelta = '';
@@ -963,33 +994,54 @@ export default {
                 });
             };
 
+            const assertStreamActive = () => {
+                if (this.streamStoppedByUser || this.streamAbortController?.signal.aborted) {
+                    throw createAbortError();
+                }
+            };
+
+            const maybeYield = async () => {
+                processedLines += 1;
+                if (
+                    processedLines < STREAM_PARSE_BATCH_LINES
+                    && performance.now() - batchStartedAt < STREAM_PARSE_MAX_SYNC_MS
+                ) {
+                    return;
+                }
+                flushPending();
+                await waitForMainThread();
+                assertStreamActive();
+                processedLines = 0;
+                batchStartedAt = performance.now();
+            };
+
+            const processLine = async line => {
+                if (!line) {
+                    flush();
+                } else if (line.startsWith('event:')) {
+                    eventName = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    dataLines.push(line.slice(5).trimStart());
+                }
+                await maybeYield();
+            };
+
             try {
                 while (true) {
                     const { value, done } = await readNext();
                     if (done) break;
+                    assertStreamActive();
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split(/\r?\n/);
                     buffer = lines.pop() || '';
                     for (const line of lines) {
-                        if (!line) {
-                            flush();
-                        } else if (line.startsWith('event:')) {
-                            eventName = line.slice(6).trim();
-                        } else if (line.startsWith('data:')) {
-                            dataLines.push(line.slice(5).trimStart());
-                        }
+                        await processLine(line);
                     }
                 }
                 buffer += decoder.decode();
                 if (buffer) {
                     for (const line of buffer.split(/\r?\n/)) {
-                        if (!line) {
-                            flush();
-                        } else if (line.startsWith('event:')) {
-                            eventName = line.slice(6).trim();
-                        } else if (line.startsWith('data:')) {
-                            dataLines.push(line.slice(5).trimStart());
-                        }
+                        await processLine(line);
                     }
                 }
                 flush();
