@@ -60,6 +60,30 @@ test('buildResponsesPayload 省略空可选字段', () => {
     assert.equal(payload.tools, undefined);
 });
 
+test('buildResponsesPayload 将 assistant 历史文本转换为 output_text', () => {
+    const payload = buildResponsesPayload({
+        model: 'gpt-5',
+        messages: [
+            {
+                role: 'user',
+                content: [{ type: 'text', text: '第一问' }],
+            },
+            {
+                role: 'assistant',
+                content: [{ type: 'text', text: '第一答' }],
+            },
+            {
+                role: 'user',
+                content: [{ type: 'text', text: '第二问' }],
+            },
+        ],
+    });
+
+    assert.deepEqual(payload.input[0].content, [{ type: 'input_text', text: '第一问' }]);
+    assert.deepEqual(payload.input[1].content, [{ type: 'output_text', text: '第一答' }]);
+    assert.deepEqual(payload.input[2].content, [{ type: 'input_text', text: '第二问' }]);
+});
+
 test('buildCompletionsPayload 转换系统提示、文本、图片和 reasoning_effort', () => {
     const payload = buildCompletionsPayload({
         model: 'gpt-4o',

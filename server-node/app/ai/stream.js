@@ -31,7 +31,6 @@ export async function* parseSseStream(readable) {
                 yield* emit();
                 continue;
             }
-            console.log(line)
             if (line.startsWith('event:')) {
                 event = line.slice(6).trim();
                 continue;
@@ -102,9 +101,89 @@ const extractImageEvents = body => {
     return events;
 };
 
+const normalizeWebSearchStatus = value => {
+    if (value === 'searching' || value === 'completed' || value === 'failed') {
+        return value;
+    }
+    return 'in_progress';
+};
+
+const createWebSearchEvent = ({ id, status, action, outputIndex }) => {
+    const query = action?.query || '';
+    const queries = Array.isArray(action?.queries)
+        ? action.queries.filter(Boolean)
+        : [];
+    return {
+        event: 'web_search',
+        data: {
+            id: id || '',
+            status: normalizeWebSearchStatus(status),
+            query,
+            queries,
+            outputIndex,
+        },
+    };
+};
+
+const extractWebSearchEvents = ({ event, body }) => {
+    const item = body?.item || body?.output_item;
+    if (item?.type === 'web_search_call') {
+        return [createWebSearchEvent({
+            id: item.id,
+            status: item.status,
+            action: item.action,
+            outputIndex: body.output_index,
+        })];
+    }
+
+    if (event?.startsWith('response.web_search_call.') || body?.type?.startsWith?.('response.web_search_call.')) {
+        return [createWebSearchEvent({
+            id: body.item_id,
+            status: `${event || body.type || ''}`.split('.').pop(),
+            outputIndex: body.output_index,
+        })];
+    }
+
+    return [];
+};
+
+const collectUrlAnnotations = value => {
+    if (!value || typeof value !== 'object') return [];
+    const annotations = [];
+    const visit = item => {
+        if (!item || typeof item !== 'object') return;
+        if (
+            (item.type === 'url_citation' || item.type === 'citation' || item.url)
+            && typeof item.url === 'string'
+            && /^https?:\/\//i.test(item.url)
+        ) {
+            annotations.push({
+                title: `${item.title || item.text || item.url}`,
+                url: item.url,
+            });
+        }
+        for (const child of Object.values(item)) {
+            if (Array.isArray(child)) {
+                child.forEach(visit);
+            } else if (child && typeof child === 'object') {
+                visit(child);
+            }
+        }
+    };
+    visit(value);
+    return annotations;
+};
+
+const extractWebSourceEvents = body => collectUrlAnnotations(body).map(source => ({
+    event: 'web_source',
+    data: source,
+}));
+
 export const normalizeOpenAiSseEvent = ({ event, data }) => {
     const body = parseJson(data);
     if (!body) return [];
+    const webSearchEvents = extractWebSearchEvents({ event, body });
+    if (webSearchEvents.length) return webSearchEvents;
 
     if (body.object === 'chat.completion.chunk') {
         const events = [];
@@ -129,6 +208,7 @@ export const normalizeOpenAiSseEvent = ({ event, data }) => {
         const response = body.response || body;
         return [
             ...extractImageEvents(response),
+            ...extractWebSourceEvents(response),
             { event: 'usage', data: normalizeUsage(response.usage) },
             { event: 'complete', data: { responseId: response.id || '' } },
         ];
@@ -143,5 +223,8 @@ export const normalizeOpenAiSseEvent = ({ event, data }) => {
         }];
     }
 
-    return extractImageEvents(body);
+    return [
+        ...extractImageEvents(body),
+        ...extractWebSourceEvents(body),
+    ];
 };

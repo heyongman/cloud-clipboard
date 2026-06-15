@@ -26,7 +26,20 @@ export const createOpenAiHeaders = config => {
     };
 };
 
-const normalizeContentItem = item => {
+const normalizeContentItem = (item, role = 'user') => {
+    if (role === 'assistant') {
+        if (item?.type === 'refusal') {
+            return {
+                type: 'refusal',
+                refusal: `${item?.refusal ?? item?.text ?? ''}`,
+            };
+        }
+        return {
+            type: 'output_text',
+            text: `${item?.text ?? ''}`,
+        };
+    }
+
     if (item?.type === 'image') {
         return {
             type: 'input_image',
@@ -59,8 +72,13 @@ const normalizeCompletionContentItem = item => {
 const normalizeMessage = message => ({
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: Array.isArray(message.content)
-        ? message.content.map(normalizeContentItem).filter(item => item.text || item.image_url)
-        : [{ type: 'input_text', text: `${message.content ?? ''}` }],
+        ? message.content
+            .map(item => normalizeContentItem(item, message.role === 'assistant' ? 'assistant' : 'user'))
+            .filter(item => item.text || item.refusal || item.image_url)
+        : [{
+            type: message.role === 'assistant' ? 'output_text' : 'input_text',
+            text: `${message.content ?? ''}`,
+        }],
 });
 
 const normalizeCompletionMessage = message => ({

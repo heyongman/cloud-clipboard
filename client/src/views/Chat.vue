@@ -98,6 +98,46 @@
                                 {{ message.error }}
                             </v-alert>
                             <div
+                                v-if="(message.webSearches && message.webSearches.length) || (message.webSources && message.webSources.length)"
+                                class="web-search-panel"
+                            >
+                                <div
+                                    v-for="search in message.webSearches"
+                                    :key="search.id"
+                                    class="web-search-step"
+                                >
+                                    <div class="web-search-step-title">
+                                        <v-icon x-small>{{ mdiMagnify }}</v-icon>
+                                        <span>{{ getWebSearchStatusText(search.status) }}</span>
+                                    </div>
+                                    <div class="web-search-queries">
+                                        <v-chip
+                                            v-for="query in getWebSearchQueries(search)"
+                                            :key="`${search.id}:${query}`"
+                                            x-small
+                                            outlined
+                                            class="web-search-query"
+                                        >
+                                            {{ query }}
+                                        </v-chip>
+                                    </div>
+                                </div>
+                                <div v-if="message.webSources && message.webSources.length" class="web-source-list">
+                                    <a
+                                        v-for="source in message.webSources"
+                                        :key="source.url"
+                                        class="web-source-link"
+                                        :href="source.url"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >
+                                        <span class="web-source-title">{{ source.title || source.url }}</span>
+                                        <span class="web-source-domain">{{ getSourceDomain(source.url) }}</span>
+                                        <v-icon x-small>{{ mdiOpenInNew }}</v-icon>
+                                    </a>
+                                </div>
+                            </div>
+                            <div
                                 v-if="message.text"
                                 class="markdown-body"
                                 v-html="renderMessageMarkdown(message)"
@@ -350,6 +390,8 @@ import {
     mdiEyeOff,
     mdiFile,
     mdiImagePlus,
+    mdiMagnify,
+    mdiOpenInNew,
     mdiPlus,
     mdiRefresh,
     mdiRobot,
@@ -402,6 +444,8 @@ export default {
             mdiEyeOff,
             mdiFile,
             mdiImagePlus,
+            mdiMagnify,
+            mdiOpenInNew,
             mdiPlus,
             mdiRefresh,
             mdiRobot,
@@ -824,6 +868,8 @@ export default {
                 role: 'assistant',
                 text: '',
                 images: [],
+                webSearches: [],
+                webSources: [],
                 streaming: true,
                 failed: false,
                 error: '',
@@ -845,6 +891,8 @@ export default {
             if (!this.activeConversation || this.sending || message.role !== 'assistant') return;
             message.text = '';
             message.images = [];
+            this.$set(message, 'webSearches', []);
+            this.$set(message, 'webSources', []);
             message.streaming = true;
             message.failed = false;
             message.error = '';
@@ -1069,6 +1117,12 @@ export default {
 
             if (eventName === 'text_delta') {
                 stream?.appendText(data.delta || '');
+            } else if (eventName === 'web_search') {
+                this.mergeWebSearchEvent(assistantMessage, data);
+                stream?.flushNow();
+            } else if (eventName === 'web_source') {
+                this.mergeWebSourceEvent(assistantMessage, data);
+                stream?.flushNow();
             } else if (eventName === 'complete') {
                 stream?.flushNow();
                 if (data.responseId) {
@@ -1092,6 +1146,62 @@ export default {
                 stream?.flushNow();
                 assistantMessage.failed = true;
                 assistantMessage.error = data.message || 'AI请求失败';
+            }
+        },
+        mergeWebSearchEvent(message, data) {
+            const id = data.id || `web_search_${data.outputIndex ?? (message.webSearches || []).length}`;
+            if (!message.webSearches) {
+                this.$set(message, 'webSearches', []);
+            }
+            const existing = message.webSearches.find(item => item.id === id);
+            const queries = Array.isArray(data.queries)
+                ? data.queries.filter(Boolean)
+                : [];
+            const next = {
+                id,
+                status: data.status || 'in_progress',
+                query: data.query || '',
+                queries,
+                outputIndex: data.outputIndex,
+            };
+            if (!existing) {
+                message.webSearches.push(next);
+                return;
+            }
+            this.$set(existing, 'status', next.status || existing.status);
+            if (next.query) {
+                this.$set(existing, 'query', next.query);
+            }
+            if (next.queries.length) {
+                this.$set(existing, 'queries', next.queries);
+            }
+        },
+        mergeWebSourceEvent(message, data) {
+            if (!data.url) return;
+            if (!message.webSources) {
+                this.$set(message, 'webSources', []);
+            }
+            if (message.webSources.some(source => source.url === data.url)) return;
+            message.webSources.push({
+                title: data.title || data.url,
+                url: data.url,
+            });
+        },
+        getWebSearchQueries(search) {
+            const queries = Array.isArray(search.queries) ? search.queries.filter(Boolean) : [];
+            return queries.length ? queries : (search.query ? [search.query] : []);
+        },
+        getWebSearchStatusText(status) {
+            if (status === 'completed') return '已完成搜索';
+            if (status === 'searching') return '正在搜索';
+            if (status === 'failed') return '搜索失败';
+            return '准备搜索';
+        },
+        getSourceDomain(url) {
+            try {
+                return new URL(url).hostname.replace(/^www\./, '');
+            } catch {
+                return '';
             }
         },
         async copyMessageText(message) {
@@ -1255,6 +1365,79 @@ export default {
 
 .message-error {
     margin-bottom: 8px;
+}
+
+.web-search-panel {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid rgba(127, 127, 127, 0.18);
+    border-radius: 8px;
+    background: rgba(127, 127, 127, 0.06);
+}
+
+.web-search-step {
+    display: grid;
+    gap: 6px;
+}
+
+.web-search-step-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: rgba(127, 127, 127, 0.98);
+}
+
+.web-search-queries {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.web-search-query {
+    max-width: 100%;
+}
+
+.web-search-query >>> .v-chip__content {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.web-source-list {
+    display: grid;
+    gap: 6px;
+}
+
+.web-source-link {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border: 1px solid rgba(127, 127, 127, 0.18);
+    border-radius: 6px;
+    color: inherit;
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.web-source-link:hover {
+    border-color: currentColor;
+}
+
+.web-source-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.web-source-domain {
+    font-size: 12px;
+    color: rgba(127, 127, 127, 0.95);
 }
 
 .markdown-body {
