@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { parse as parseYaml } from 'yaml';
 
@@ -10,6 +13,17 @@ import {
     convertSubscriptionSources,
     generateSubscriptionUrl,
 } from '../app/subscription/service.js';
+
+// 山海测试用唯一 token 文件路径，并在每次用例前清理，避免 token 缓存导致行为不确定。
+const makeTokenFile = name => {
+    const file = path.join(os.tmpdir(), `shanhai-task7-${name}-${process.pid}.json`);
+    try {
+        fs.unlinkSync(file);
+    } catch {
+        // 忽略不存在
+    }
+    return file;
+};
 
 test('parseSubscriptionContent 解析 Clash YAML', async () => {
     const proxies = await parseSubscriptionContent(`
@@ -101,6 +115,142 @@ test('validateSubscriptionConfig 拒绝非法 URL 与非法正则', () => {
         excludePatterns: [],
         customRules: [],
     }));
+});
+
+test('validateSubscriptionConfig 接受对象 source 并跳过 URL 校验', () => {
+    const result = validateSubscriptionConfig({
+        sources: [{ type: 'shanhai' }],
+        includePatterns: [],
+        excludePatterns: [],
+        customRules: [],
+    });
+
+    assert.deepEqual(result.sources, [{ type: 'shanhai' }]);
+});
+
+test('validateSubscriptionConfig 仍拒绝非法字符串 URL（对象与字符串混合）', () => {
+    assert.throws(() => validateSubscriptionConfig({
+        sources: [{ type: 'shanhai' }, 'not-a-url'],
+        includePatterns: [],
+        excludePatterns: [],
+        customRules: [],
+    }));
+});
+
+test('convertSubscriptionSources 山海作为第一个成功 source 成为 template', async () => {
+    const shanhaiYaml = `
+dns:
+  enable: true
+  nameserver:
+    - 223.5.5.5
+proxy-groups:
+  - { name: 自动测速, type: url-test, proxies: [SH-1] }
+rules:
+  - DOMAIN-SUFFIX,shanhai.example,自动测速
+proxies:
+  - { name: SH-1, type: ss, server: 9.9.9.9, port: 443, cipher: aes-128-gcm, password: pass }
+`;
+
+    const fetch = {
+        fetchApiUrl: async () => ({ apiUrl: 'https://api.example', cfg: {} }),
+        v2boardLogin: async () => 'auth-data',
+        getSubscribeInfo: async () => 'https://sub.example/x',
+        downloadSubscription: async () => Buffer.from(shanhaiYaml),
+    };
+
+    const result = await convertSubscriptionSources({
+        sources: [],
+        includePatterns: [],
+        excludePatterns: [],
+        customRules: [],
+        shanhai: {
+            enabled: true,
+            email: 'test@example.com',
+            password: 'secret',
+            tokenFile: makeTokenFile('template'),
+            fetch,
+        },
+    });
+
+    assert.equal(result.summary.successSourceCount, 1);
+    assert.equal(result.summary.failedSourceCount, 0);
+    assert.deepEqual(result.proxies.map(item => item.name), ['SH-1']);
+    const parsed = parseYaml(result.yaml);
+    assert.deepEqual(parsed.dns, {
+        enable: true,
+        nameserver: ['223.5.5.5'],
+    });
+    // 继承的山海规则被改写（自动测速 → 分组选择）
+    assert.deepEqual(parsed.rules, [
+        'DOMAIN-SUFFIX,shanhai.example,分组选择',
+    ]);
+});
+
+test('convertSubscriptionSources 山海失败时作为单个 error 不阻断其他源', async () => {
+    const fetch = {
+        fetchApiUrl: async () => {
+            throw new Error('登录失败');
+        },
+    };
+
+    const fetchSource = async url => 'ss://YWVzLTEyOC1nY206cGFzc0AyLjIuMi4yOjQ0MyNVUy0x';
+
+    const result = await convertSubscriptionSources({
+        sources: ['https://a.example/good'],
+        includePatterns: [],
+        excludePatterns: [],
+        customRules: [],
+        fetchSource,
+        shanhai: {
+            enabled: true,
+            email: 'test@example.com',
+            password: 'secret',
+            tokenFile: makeTokenFile('fail'),
+            fetch,
+        },
+    });
+
+    assert.equal(result.summary.successSourceCount, 1);
+    assert.equal(result.summary.failedSourceCount, 1);
+    assert.equal(result.errors.length, 1);
+    assert.equal(result.errors[0].source, '[shanhai]');
+    assert.match(result.errors[0].message, /^\[山海\]/);
+    assert.deepEqual(result.proxies.map(item => item.name), ['US-1']);
+});
+
+test('convertSubscriptionSources shanhai.enabled 自动注入山海源', async () => {
+    let called = 0;
+    const shanhaiYaml = `
+proxies:
+  - { name: SH-1, type: ss, server: 9.9.9.9, port: 443, cipher: aes-128-gcm, password: pass }
+`;
+    const fetch = {
+        fetchApiUrl: async () => {
+            called += 1;
+            return { apiUrl: 'https://api.example', cfg: {} };
+        },
+        v2boardLogin: async () => 'auth-data',
+        getSubscribeInfo: async () => 'https://sub.example/x',
+        downloadSubscription: async () => Buffer.from(shanhaiYaml),
+    };
+
+    const result = await convertSubscriptionSources({
+        sources: [],
+        includePatterns: [],
+        excludePatterns: [],
+        customRules: [],
+        shanhai: {
+            enabled: true,
+            email: 'test@example.com',
+            password: 'secret',
+            tokenFile: makeTokenFile('inject'),
+            fetch,
+        },
+    });
+
+    assert.equal(called, 1);
+    assert.equal(result.summary.successSourceCount, 1);
+    assert.deepEqual(result.proxies.map(item => item.name), ['SH-1']);
 });
 
 test('convertSubscriptionSources 汇总节点统计与错误摘要', async () => {

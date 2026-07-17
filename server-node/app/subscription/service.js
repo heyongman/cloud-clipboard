@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 
 import { parse, Scalar, stringify } from 'yaml';
 
+import { fetchShanhaiSubscription } from './shanhai-source.js';
+
 const URI_PROTOCOL_PATTERN = /^(ss|trojan|vmess|vless):\/\//i;
 
 const createHttpError = (status, message) => {
@@ -19,6 +21,33 @@ const sanitizeLines = value => {
     return value
         .map(item => `${item ?? ''}`.trim())
         .filter(Boolean);
+};
+
+// sources 支持字符串（订阅 URL）与对象（{ type: 'shanhai', ... }）两种形态。
+// 字符串 trim 后保留非空项；对象原样保留（仅过滤 null/非对象/无 type）。
+const sanitizeSources = value => {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map(item => {
+            if (item === null || item === undefined) {
+                return null;
+            }
+
+            if (typeof item === 'object') {
+                const type = `${item.type ?? ''}`.trim();
+                if (!type) {
+                    return null;
+                }
+                return { ...item, type };
+            }
+
+            const trimmed = `${item}`.trim();
+            return trimmed || null;
+        })
+        .filter(item => item !== null);
 };
 
 const sanitizeRuleLines = value => sanitizeLines(value).map(rule => {
@@ -394,6 +423,28 @@ const defaultFetchSource = async url => {
     return response.text();
 };
 
+// 解析对象形态的 source（{ type: 'shanhai' } 走山海分支），返回订阅明文。
+// shanhai 分支透传 email/password/tokenFile/ossUrls/fetch 给 fetchShanhaiSubscription。
+const resolveTypedSource = async (source, shanhai = {}) => {
+    const { type } = source;
+    if (type === 'shanhai') {
+        try {
+            return await fetchShanhaiSubscription({
+                email: shanhai.email,
+                password: shanhai.password,
+                tokenFile: shanhai.tokenFile,
+                ossUrls: shanhai.ossUrls,
+                fetch: shanhai.fetch,
+            });
+        } catch (error) {
+            const message = error?.message ? `[山海] ${error.message}` : '[山海] 未知错误';
+            throw new Error(message);
+        }
+    }
+
+    throw new Error(`未知的 source type: ${type}`);
+};
+
 export const createDefaultSubscriptionConfig = () => ({
     sources: [],
     includePatterns: [],
@@ -404,12 +455,16 @@ export const createDefaultSubscriptionConfig = () => ({
 });
 
 export const validateSubscriptionConfig = input => {
-    const sources = sanitizeLines(input?.sources);
+    const sources = sanitizeSources(input?.sources);
     if (!sources.length) {
         throw createHttpError(400, '至少需要一个上游订阅 URL');
     }
 
-    sources.forEach(assertHttpUrl);
+    sources.forEach(source => {
+        if (typeof source === 'string') {
+            assertHttpUrl(source);
+        }
+    });
 
     const includePatterns = sanitizeLines(input?.includePatterns);
     const excludePatterns = sanitizeLines(input?.excludePatterns);
@@ -519,14 +574,21 @@ export const convertSubscriptionSources = async ({
     excludePatterns = [],
     customRules = [],
     fetchSource = defaultFetchSource,
+    shanhai = {},
 }) => {
+    // 山海启用且配置完整时，自动把 { type: 'shanhai' } 注入到 sources 最前
+    const injectShanhai = shanhai?.enabled && shanhai.email && shanhai.password;
+    const mergedSources = injectShanhai
+        ? [{ type: 'shanhai' }, ...(Array.isArray(sources) ? sources : [])]
+        : sources;
+
     const {
         sources: validSources,
         includePatterns: validIncludePatterns,
         excludePatterns: validExcludePatterns,
         customRules: validCustomRules,
     } = validateSubscriptionConfig({
-        sources,
+        sources: mergedSources,
         includePatterns,
         excludePatterns,
         customRules,
@@ -540,8 +602,11 @@ export const convertSubscriptionSources = async ({
     let templateSelected = false;
 
     for (const source of validSources) {
+        const isStringSource = typeof source === 'string';
         try {
-            const rawText = await fetchSource(source);
+            const rawText = isStringSource
+                ? await fetchSource(source)
+                : await resolveTypedSource(source, shanhai);
             const text = `${rawText ?? ''}`.trim();
             const clashSubscription = parseClashSubscription(text);
             const parsedProxies = clashSubscription
@@ -566,7 +631,7 @@ export const convertSubscriptionSources = async ({
         } catch (error) {
             failedSourceCount += 1;
             errors.push({
-                source,
+                source: isStringSource ? source : `[${source.type}]`,
                 message: error.message || '未知错误',
             });
         }
