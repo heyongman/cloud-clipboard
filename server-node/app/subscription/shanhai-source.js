@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import http from 'node:http';
+import https from 'node:https';
 
 // ─── 硬编码常量（来自二进制反汇编，平移自 shanhai_decode.py）─────────
 export const OSS_AES_KEY = Buffer.from('4422a60e08c97f30', 'utf8');
@@ -118,4 +120,50 @@ export const decryptSubscription = (body, password = SUB_PASSWORD) => {
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(ct), decipher.final()]);
+};
+
+// ─── HTTP 工具（模块内私有，不导出）────────────────────────────────────
+// 订阅服务器可能用非常规证书/自签，统一关闭校验
+const insecureHttpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+const httpRequest = (url, { method = 'GET', headers = {}, body = null, timeoutMs = 30000 } = {}) => new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const transport = parsed.protocol === 'http:' ? http : https;
+    const options = {
+        method,
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
+        path: `${parsed.pathname}${parsed.search}`,
+        headers,
+        agent: transport === https ? insecureHttpsAgent : undefined,
+    };
+    const req = transport.request(options, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => {
+        req.destroy(new Error(`请求超时 (${timeoutMs}ms): ${url}`));
+    });
+    if (body) {
+        req.write(body);
+    }
+    req.end();
+});
+
+const httpGet = (url, headers = {}, timeoutMs = 30000) => httpRequest(url, { headers, timeoutMs })
+    .then(({ status, body }) => {
+        if (status < 200 || status >= 300) {
+            throw new Error(`HTTP ${status}: ${url}`);
+        }
+        return body;
+    });
+
+// POST JSON，即使 HTTP 错误也返回 status+body（v2board 登录失败返回 500 + JSON message）
+const httpPostJson = (url, payload, headers = {}, timeoutMs = 30000) => {
+    const body = Buffer.from(JSON.stringify(payload), 'utf8');
+    const mergedHeaders = { 'Content-Type': 'application/json', ...headers };
+    return httpRequest(url, { method: 'POST', headers: mergedHeaders, body, timeoutMs })
+        .then(({ status, body: respBody }) => ({ status, body: respBody }));
 };
