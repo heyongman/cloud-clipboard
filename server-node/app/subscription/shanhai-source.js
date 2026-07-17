@@ -221,10 +221,16 @@ const fetchApiUrl = async (ossUrls) => {
 const v2boardLogin = async (apiUrl, email, password) => {
     const url = `${apiUrl}/api/v1/passport/auth/login`;
     const { status, body } = await httpPostJson(url, { email, password }, { 'User-Agent': SUB_UA });
-    const data = parseJsonBody(body);
     if (isAuthError({ status, body })) {
-        throw new AuthError(`登录失败: ${data.message || '未知鉴权错误'} (raw=${JSON.stringify(data)})`);
+        let errData = {};
+        try {
+            errData = parseJsonBody(body);
+        } catch {
+            errData = {};
+        }
+        throw new AuthError(`登录失败: ${errData.message || '未知鉴权错误'} (raw=${JSON.stringify(errData)})`);
     }
+    const data = parseJsonBody(body);
     const d = data.data || data;
     const authData = d.auth_data;
     if (!authData) {
