@@ -123,7 +123,7 @@ token 文件：`shanhai-token.json`，路径优先 `config.server.shanhai.tokenF
 
 ## HTTP / 解密实现细节
 
-**HTTP 与 TLS：** Node 18 内置 `undici`。用 `undici.Agent({ connect: { rejectUnauthorized: false } })` 创建共享 agent，所有山海相关请求经 `dispatcher` 选项传入。`import { Agent } from 'undici'`（内置模块，无需加依赖）。请求用 `AbortSignal.timeout(30000)`，与 Python 版 30s 一致。
+**HTTP 与 TLS：** 用 `node:https`/`node:http` + `https.Agent({ rejectUnauthorized: false })` 自写 `httpGet`/`httpPostJson`（复刻 Python 版 urllib 语义），所有山海相关请求经该 agent 关闭 TLS 校验。超时用 `req.setTimeout(30000)` + `AbortController` 双保险，与 Python 版 30s 一致。不依赖 undici 独立包（当前 Node 环境无法 `import 'undici'`），零新依赖。
 
 **AES-128-CBC（OSS payload）：**
 - `b64decodeAny`：去非表字符 + 补 `=` + base64 解码。
