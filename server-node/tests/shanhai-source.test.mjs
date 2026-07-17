@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import test from 'node:test';
 import zlib from 'node:zlib';
 
 import {
     b64decodeAny,
+    decodeOssPayload,
     looksLikeJson,
     isPlainClashYaml,
     normalizeSubscription,
@@ -45,4 +47,37 @@ test('normalizeSubscription 解压 gzip', () => {
 test('normalizeSubscription 原样返回普通内容', () => {
     const raw = Buffer.from('proxies:');
     assert.equal(normalizeSubscription(raw).toString('utf8'), 'proxies:');
+});
+
+// 构造 AES-128-CBC 密文：内层是 base64(JSON)，外层再 base64
+const buildOssCiphertext = (json) => {
+    const innerJson = JSON.stringify(json);
+    const innerB64 = Buffer.from(innerJson, 'utf8').toString('base64');
+    const cipher = crypto.createCipheriv(
+        'aes-128-cbc',
+        Buffer.from('4422a60e08c97f30', 'utf8'),
+        Buffer.from('8c97f304422a60e0', 'utf8'),
+    );
+    const enc = Buffer.concat([cipher.update(innerB64, 'utf8'), cipher.final()]);
+    return enc.toString('base64');
+};
+
+test('decodeOssPayload 路径1：已是 JSON 直接返回', () => {
+    const obj = { hosts: ['https://api.example.cn'] };
+    const out = decodeOssPayload(Buffer.from(JSON.stringify(obj)));
+    assert.deepEqual(out, obj);
+});
+
+test('decodeOssPayload 路径2：AES-128-CBC 解密后是 JSON', () => {
+    const obj = { hosts: ['https://api.example.cn', 'https://api2.example.cn'] };
+    const ct = buildOssCiphertext(obj);
+    const out = decodeOssPayload(ct);
+    assert.deepEqual(out, obj);
+});
+
+test('decodeOssPayload 路径3：plain base64 解码后是 JSON', () => {
+    const obj = { hosts: ['https://api.example.cn'] };
+    const plainB64 = Buffer.from(JSON.stringify(obj), 'utf8').toString('base64');
+    const out = decodeOssPayload(plainB64);
+    assert.deepEqual(out, obj);
 });

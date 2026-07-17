@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 
 // ─── 硬编码常量（来自二进制反汇编，平移自 shanhai_decode.py）─────────
@@ -55,4 +56,44 @@ export const normalizeSubscription = input => {
         body = zlib.gunzipSync(body);
     }
     return body;
+};
+
+// decodeOssPayload: 三路解码（JSON → AES-128-CBC → plain base64 → 兜底）
+export const decodeOssPayload = rawBody => {
+    const body = Buffer.isBuffer(rawBody)
+        ? rawBody.toString('utf8')
+        : `${rawBody ?? ''}`;
+
+    // 路径1：已是 JSON
+    if (looksLikeJson(body)) {
+        return JSON.parse(body);
+    }
+
+    // 路径2：AES-128-CBC 解密（解密结果是 base64 文本，需再 base64decode）
+    try {
+        const enc = b64decodeAny(body);
+        if (enc.length >= 16 && enc.length % 16 === 0) {
+            const decipher = crypto.createDecipheriv('aes-128-cbc', OSS_AES_KEY, OSS_AES_IV);
+            const pt = Buffer.concat([decipher.update(enc), decipher.final()]);
+            const inner = b64decodeAny(pt);
+            if (looksLikeJson(inner)) {
+                return JSON.parse(inner.toString('utf8'));
+            }
+        }
+    } catch {
+        // 落到下一条路径
+    }
+
+    // 路径3：plain base64
+    try {
+        const dec = b64decodeAny(body);
+        if (looksLikeJson(dec)) {
+            return JSON.parse(dec.toString('utf8'));
+        }
+    } catch {
+        // 落到兜底
+    }
+
+    // 兜底
+    return JSON.parse(body);
 };
