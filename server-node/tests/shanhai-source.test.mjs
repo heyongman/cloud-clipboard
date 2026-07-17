@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import zlib from 'node:zlib';
 
@@ -7,6 +10,7 @@ import {
     b64decodeAny,
     decodeOssPayload,
     decryptSubscription,
+    fetchShanhaiSubscription,
     looksLikeJson,
     isPlainClashYaml,
     normalizeSubscription,
@@ -136,4 +140,139 @@ test('AuthError 是 Error 子类', () => {
     const e = new AuthError('请先登录');
     assert.ok(e instanceof Error);
     assert.equal(e.message, '请先登录');
+});
+
+test('fetchShanhaiSubscription 首次无 token → 完整登录并返回解密明文', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    let loginCount = 0;
+    const sub = await fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => ({ apiUrl: 'https://api.example.cn', cfg: {} }),
+            v2boardLogin: async () => { loginCount += 1; return 'JWT-1'; },
+            getSubscribeInfo: async () => 'https://sub.example.cn/sub',
+            downloadSubscription: async () => {
+                // 返回明文 YAML，走 isPlainClashYaml 分支
+                return Buffer.from('proxies:\n  - {name: HK, type: ss, server: 1.1.1.1, port: 443, cipher: aes-128-gcm, password: p}');
+            },
+        },
+    });
+    assert.equal(sub.toString('utf8').includes('proxies:'), true);
+    assert.equal(loginCount, 1);
+    // token 已落盘
+    const saved = JSON.parse(await fs.readFile(tokenFile, 'utf8'));
+    assert.equal(saved.authData, 'JWT-1');
+});
+
+test('fetchShanhaiSubscription 有 token → 复用，不重新登录', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    await fs.writeFile(tokenFile, JSON.stringify({
+        authData: 'JWT-CACHED',
+        subscribeUrl: 'https://sub.example.cn/sub',
+        apiUrl: 'https://api.example.cn',
+    }));
+    let loginCount = 0;
+    const sub = await fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => { throw new Error('不该调用'); },
+            v2boardLogin: async () => { loginCount += 1; return 'JWT-NEW'; },
+            getSubscribeInfo: async () => 'https://sub.example.cn/sub',
+            downloadSubscription: async () => Buffer.from('mixed-port: 7890'),
+        },
+    });
+    assert.equal(sub.toString('utf8'), 'mixed-port: 7890');
+    assert.equal(loginCount, 0);
+});
+
+test('fetchShanhaiSubscription 鉴权失败 → 自动重登重试一次', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    await fs.writeFile(tokenFile, JSON.stringify({
+        authData: 'JWT-OLD',
+        subscribeUrl: 'https://sub.example.cn/sub',
+        apiUrl: 'https://api.example.cn',
+    }));
+    let loginCount = 0;
+    let getSubCount = 0;
+    const sub = await fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => ({ apiUrl: 'https://api.example.cn', cfg: {} }),
+            v2boardLogin: async () => { loginCount += 1; return `JWT-${loginCount}`; },
+            getSubscribeInfo: async (apiUrl, authData) => {
+                getSubCount += 1;
+                if (authData === 'JWT-OLD') {
+                    const err = new AuthError('请先登录');
+                    throw err;
+                }
+                return 'https://sub.example.cn/sub';
+            },
+            downloadSubscription: async () => Buffer.from('mixed-port: 7890'),
+        },
+    });
+    assert.equal(sub.toString('utf8'), 'mixed-port: 7890');
+    assert.equal(loginCount, 1); // 重登一次
+    assert.equal(getSubCount, 2); // 失败1次 + 重试1次
+    // token 已更新为新的
+    const saved = JSON.parse(await fs.readFile(tokenFile, 'utf8'));
+    assert.equal(saved.authData, 'JWT-1');
+});
+
+test('fetchShanhaiSubscription 重登后仍失败 → 抛最终错误', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    await fs.writeFile(tokenFile, JSON.stringify({
+        authData: 'JWT-OLD',
+        subscribeUrl: 'https://sub.example.cn/sub',
+        apiUrl: 'https://api.example.cn',
+    }));
+    await assert.rejects(fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => ({ apiUrl: 'https://api.example.cn', cfg: {} }),
+            v2boardLogin: async () => 'JWT-NEW',
+            getSubscribeInfo: async () => { throw new AuthError('请先登录'); },
+            downloadSubscription: async () => Buffer.from(''),
+        },
+    }), /请先登录/);
+});
+
+test('fetchShanhaiSubscription 并发调用复用同一请求', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    let loginCount = 0;
+    const slowLogin = async () => {
+        loginCount += 1;
+        await new Promise(r => setTimeout(r, 20));
+        return 'JWT-1';
+    };
+    const opts = {
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => ({ apiUrl: 'https://api.example.cn', cfg: {} }),
+            v2boardLogin: slowLogin,
+            getSubscribeInfo: async () => 'https://sub.example.cn/sub',
+            downloadSubscription: async () => Buffer.from('mixed-port: 7890'),
+        },
+    };
+    const [a, b] = await Promise.all([
+        fetchShanhaiSubscription(opts),
+        fetchShanhaiSubscription(opts),
+    ]);
+    assert.equal(a.toString('utf8'), 'mixed-port: 7890');
+    assert.equal(b.toString('utf8'), 'mixed-port: 7890');
+    assert.equal(loginCount, 1); // 并发只登录一次
 });

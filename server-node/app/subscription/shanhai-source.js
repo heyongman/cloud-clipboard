@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import zlib from 'node:zlib';
 import http from 'node:http';
 import https from 'node:https';
@@ -253,3 +255,102 @@ const getSubscribeInfo = async (apiUrl, authData) => {
 
 // GET subscribe_url UA=securitynet/... → 订阅密文
 const downloadSubscription = async (subscribeUrl) => httpGet(subscribeUrl, { 'User-Agent': SUB_UA });
+
+const readTokenFile = async (tokenFile) => {
+    try {
+        const raw = await fs.readFile(tokenFile, 'utf8');
+        const data = JSON.parse(raw);
+        if (data && data.authData) {
+            return data;
+        }
+    } catch (err) {
+        if (err.code !== 'ENOENT') {
+            // 损坏的 token 文件忽略，走重新登录
+        }
+    }
+    return null;
+};
+
+const writeTokenFile = async (tokenFile, token) => {
+    await fs.mkdir(path.dirname(tokenFile), { recursive: true });
+    await fs.writeFile(tokenFile, JSON.stringify(token, null, 4));
+};
+
+// 完整登录流程，返回 token + subscribeUrl
+const fullLogin = async (deps, email, password, ossUrls) => {
+    const { apiUrl } = await deps.fetchApiUrl(ossUrls);
+    const authData = await deps.v2boardLogin(apiUrl, email, password);
+    const subscribeUrl = await deps.getSubscribeInfo(apiUrl, authData);
+    return { apiUrl, authData, subscribeUrl };
+};
+
+// 用 authData 取订阅明文：getSubscribe → download → normalize → 解密/直接返回
+// subscribeUrl 可选：若调用方已持有（如 fullLogin 刚取到），传入以避免重复请求
+const fetchPlainWithAuth = async (deps, apiUrl, authData, subscribeUrl) => {
+    const subUrl = subscribeUrl || await deps.getSubscribeInfo(apiUrl, authData);
+    const cipherBody = await deps.downloadSubscription(subUrl);
+    const normalized = normalizeSubscription(cipherBody);
+    if (isPlainClashYaml(normalized)) {
+        return normalized;
+    }
+    return decryptSubscription(normalized);
+};
+
+// 模块级并发保护：相同 tokenFile 的进行中请求复用同一 Promise
+const pendingMap = new Map();
+
+export const fetchShanhaiSubscription = async ({
+    email,
+    password,
+    tokenFile = path.join(process.cwd(), 'shanhai-token.json'),
+    ossUrls = DEFAULT_OSS_URLS,
+    fetch,
+} = {}) => {
+    if (!email || !password) {
+        throw new Error('山海源缺少 email/password 配置');
+    }
+    const deps = fetch || {
+        fetchApiUrl,
+        v2boardLogin,
+        getSubscribeInfo,
+        downloadSubscription,
+    };
+
+    const key = tokenFile;
+    if (pendingMap.has(key)) {
+        return pendingMap.get(key);
+    }
+
+    const promise = (async () => {
+        try {
+            const cached = await readTokenFile(tokenFile);
+            if (cached) {
+                try {
+                    return await fetchPlainWithAuth(deps, cached.apiUrl, cached.authData);
+                } catch (err) {
+                    if (!(err instanceof AuthError)) {
+                        throw err;
+                    }
+                    // 鉴权失败 → 重新登录重试
+                }
+            }
+            // 无 token 或鉴权失败重登
+            const token = await fullLogin(deps, email, password, ossUrls);
+            await writeTokenFile(tokenFile, token);
+            try {
+                // fullLogin 已取到 subscribeUrl，直接复用避免重复鉴权
+                return await fetchPlainWithAuth(deps, token.apiUrl, token.authData, token.subscribeUrl);
+            } catch (err) {
+                if (err instanceof AuthError) {
+                    throw new AuthError(`重登后仍鉴权失败: ${err.message}`);
+                }
+                throw err;
+            }
+        } finally {
+            pendingMap.delete(key);
+        }
+    })();
+
+    pendingMap.set(key, promise);
+    return promise;
+};
