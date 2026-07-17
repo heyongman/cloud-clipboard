@@ -171,3 +171,79 @@ const httpPostJson = (url, payload, headers = {}, timeoutMs = 30000) => {
     };
     return httpRequest(url, { method: 'POST', headers: mergedHeaders, body, timeoutMs });
 };
+
+// v2board 鉴权失败：401，或返回 JSON 含 message 且无 data
+export class AuthError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'AuthError';
+    }
+}
+
+export const isAuthError = ({ status, body }) => {
+    if (status === 401) {
+        return true;
+    }
+    try {
+        const text = body.toString('utf8').trim();
+        if (!text.startsWith('{') && !text.startsWith('[')) {
+            return false;
+        }
+        const data = JSON.parse(text);
+        return !!data && typeof data === 'object' && 'message' in data && !('data' in data);
+    } catch {
+        return false;
+    }
+};
+
+const parseJsonBody = body => JSON.parse(body.toString('utf8'));
+
+// 从 OSS 镜像拉取并解密，返回 { apiUrl, cfg }
+const fetchApiUrl = async (ossUrls) => {
+    let lastErr;
+    for (const url of ossUrls) {
+        try {
+            const body = await httpGet(url, {}, 20000);
+            const cfg = decodeOssPayload(body);
+            const hosts = cfg.hosts || [];
+            if (hosts.length) {
+                return { apiUrl: `${hosts[0]}`.replace(/\/+$/, ''), cfg };
+            }
+            throw new Error('hosts 字段为空');
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw new Error(`所有 OSS 镜像均失败: ${lastErr?.message || lastErr}`);
+};
+
+// POST /passport/auth/login → auth_data(JWT)，用于后续 /user/getSubscribe 鉴权
+const v2boardLogin = async (apiUrl, email, password) => {
+    const url = `${apiUrl}/api/v1/passport/auth/login`;
+    const { status, body } = await httpPostJson(url, { email, password }, { 'User-Agent': SUB_UA });
+    const data = parseJsonBody(body);
+    if (isAuthError({ status, body })) {
+        throw new AuthError(`登录失败: ${data.message || '未知鉴权错误'} (raw=${JSON.stringify(data)})`);
+    }
+    const d = data.data || data;
+    const authData = d.auth_data;
+    if (!authData) {
+        throw new Error(`登录响应无 auth_data: ${JSON.stringify(data)}`);
+    }
+    return authData;
+};
+
+// GET /user/getSubscribe Authorization: <auth_data JWT> → subscribe_url
+const getSubscribeInfo = async (apiUrl, authData) => {
+    const url = `${apiUrl}/api/v1/user/getSubscribe`;
+    const body = await httpGet(url, { Authorization: authData, 'User-Agent': SUB_UA });
+    const data = parseJsonBody(body);
+    const subUrl = (data.data || {}).subscribe_url || data.subscribe_url;
+    if (!subUrl) {
+        throw new Error(`订阅信息无 subscribe_url: ${JSON.stringify(data)}`);
+    }
+    return subUrl;
+};
+
+// GET subscribe_url UA=securitynet/... → 订阅密文
+const downloadSubscription = async (subscribeUrl) => httpGet(subscribeUrl, { 'User-Agent': SUB_UA });

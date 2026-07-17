@@ -11,6 +11,8 @@ import {
     isPlainClashYaml,
     normalizeSubscription,
     SUB_PASSWORD,
+    isAuthError,
+    AuthError,
 } from '../app/subscription/shanhai-source.js';
 
 test('b64decodeAny 去非表字符并补齐 =', () => {
@@ -114,4 +116,24 @@ test('decryptSubscription 篡改 tag 抛错', () => {
 test('decryptSubscription 密文太短抛错', () => {
     const short = Buffer.alloc(10).toString('base64');
     assert.throws(() => decryptSubscription(short));
+});
+
+test('isAuthError 识别 401', () => {
+    assert.equal(isAuthError({ status: 401, body: Buffer.from('') }), true);
+});
+
+test('isAuthError 识别 v2board 鉴权类 message 且无 data', () => {
+    const body = Buffer.from(JSON.stringify({ message: '请先登录' }));
+    assert.equal(isAuthError({ status: 500, body }), true);
+});
+
+test('isAuthError 不误判正常响应', () => {
+    const body = Buffer.from(JSON.stringify({ data: { token: 'x' } }));
+    assert.equal(isAuthError({ status: 200, body }), false);
+});
+
+test('AuthError 是 Error 子类', () => {
+    const e = new AuthError('请先登录');
+    assert.ok(e instanceof Error);
+    assert.equal(e.message, '请先登录');
 });
