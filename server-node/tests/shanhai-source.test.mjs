@@ -276,3 +276,22 @@ test('fetchShanhaiSubscription 并发调用复用同一请求', async () => {
     assert.equal(b.toString('utf8'), 'mixed-port: 7890');
     assert.equal(loginCount, 1); // 并发只登录一次
 });
+
+test('fetchShanhaiSubscription downloadSubscription 收到正确的 subscribeUrl', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    const tokenFile = path.join(tmpDir, 'token.json');
+    let receivedUrl = '';
+    const sub = await fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile,
+        fetch: {
+            fetchApiUrl: async () => ({ apiUrl: 'https://api.example.cn', cfg: {} }),
+            v2boardLogin: async () => 'JWT-1',
+            getSubscribeInfo: async () => 'https://sub.example.cn/real-sub',
+            downloadSubscription: async (url) => { receivedUrl = url; return Buffer.from('proxies:\n  - {name: HK, type: ss, server: 1.1.1.1, port: 443, cipher: aes-128-gcm, password: p}'); },
+        },
+    });
+    assert.equal(receivedUrl, 'https://sub.example.cn/real-sub');
+    assert.ok(sub.toString('utf8').includes('proxies:'));
+});

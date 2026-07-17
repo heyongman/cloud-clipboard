@@ -244,7 +244,10 @@ const v2boardLogin = async (apiUrl, email, password) => {
 // GET /user/getSubscribe Authorization: <auth_data JWT> → subscribe_url
 const getSubscribeInfo = async (apiUrl, authData) => {
     const url = `${apiUrl}/api/v1/user/getSubscribe`;
-    const body = await httpGet(url, { Authorization: authData, 'User-Agent': SUB_UA });
+    const { status, body } = await httpRequest(url, { headers: { Authorization: authData, 'User-Agent': SUB_UA } });
+    if (isAuthError({ status, body })) {
+        throw new AuthError('获取订阅信息鉴权失败');
+    }
     const data = parseJsonBody(body);
     const subUrl = (data.data || {}).subscribe_url || data.subscribe_url;
     if (!subUrl) {
@@ -254,7 +257,16 @@ const getSubscribeInfo = async (apiUrl, authData) => {
 };
 
 // GET subscribe_url UA=securitynet/... → 订阅密文
-const downloadSubscription = async (subscribeUrl) => httpGet(subscribeUrl, { 'User-Agent': SUB_UA });
+const downloadSubscription = async (subscribeUrl) => {
+    const { status, body } = await httpRequest(subscribeUrl, { headers: { 'User-Agent': SUB_UA } });
+    if (status === 401) {
+        throw new AuthError('下载订阅鉴权失败 (401)');
+    }
+    if (status < 200 || status >= 300) {
+        throw new Error(`HTTP ${status}: ${subscribeUrl}`);
+    }
+    return body;
+};
 
 const readTokenFile = async (tokenFile) => {
     try {
