@@ -6,9 +6,11 @@ import zlib from 'node:zlib';
 import {
     b64decodeAny,
     decodeOssPayload,
+    decryptSubscription,
     looksLikeJson,
     isPlainClashYaml,
     normalizeSubscription,
+    SUB_PASSWORD,
 } from '../app/subscription/shanhai-source.js';
 
 test('b64decodeAny 去非表字符并补齐 =', () => {
@@ -80,4 +82,36 @@ test('decodeOssPayload 路径3：plain base64 解码后是 JSON', () => {
     const plainB64 = Buffer.from(JSON.stringify(obj), 'utf8').toString('base64');
     const out = decodeOssPayload(plainB64);
     assert.deepEqual(out, obj);
+});
+
+// 构造合法 GCM 密文：与 Python 版格式一致 raw = nonce(12) + ct + tag(16)
+const buildGcmCiphertext = (plain, password) => {
+    const key = crypto.createHash('sha256').update(password).digest();
+    const nonce = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+    const ct = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return Buffer.concat([nonce, ct, tag]).toString('base64');
+};
+
+test('decryptSubscription 正确解密合法密文', () => {
+    const plain = 'proxies:\n  - {name: HK, type: ss, server: 1.1.1.1, port: 443, cipher: aes-128-gcm, password: p}';
+    const ct = buildGcmCiphertext(plain, SUB_PASSWORD);
+    const out = decryptSubscription(ct);
+    assert.equal(out.toString('utf8'), plain);
+});
+
+test('decryptSubscription 篡改 tag 抛错', () => {
+    const plain = 'proxies:\n  - {name: HK}';
+    const ct = buildGcmCiphertext(plain, SUB_PASSWORD);
+    // 翻转最后一字节（tag 末位）
+    const raw = Buffer.from(ct, 'base64');
+    raw[raw.length - 1] ^= 0xff;
+    const tampered = raw.toString('base64');
+    assert.throws(() => decryptSubscription(tampered));
+});
+
+test('decryptSubscription 密文太短抛错', () => {
+    const short = Buffer.alloc(10).toString('base64');
+    assert.throws(() => decryptSubscription(short));
 });

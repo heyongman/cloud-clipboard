@@ -97,3 +97,25 @@ export const decodeOssPayload = rawBody => {
     // 兜底
     return JSON.parse(body);
 };
+
+// securityNetAESKey: key = SHA256(password)（32 字节）
+const securityNetAesKey = password => crypto.createHash('sha256').update(password).digest();
+
+// tryDecryptSecurityNetSubscription:
+//   raw = base64decode(trim(body)); nonce=raw[:12]; ctWithTag=raw[12:]
+//   Go crypto/cipher gcm: tag 附在 ciphertext 末尾（最后 16 字节）
+export const decryptSubscription = (body, password = SUB_PASSWORD) => {
+    const text = Buffer.isBuffer(body) ? body.toString('utf8') : `${body ?? ''}`;
+    const raw = b64decodeAny(text.trim());
+    if (raw.length < 28) {
+        throw new Error(`密文太短 (${raw.length} < 28)`);
+    }
+    const key = securityNetAesKey(password);
+    const nonce = raw.subarray(0, 12);
+    const ctWithTag = raw.subarray(12);
+    const ct = ctWithTag.subarray(0, ctWithTag.length - 16);
+    const tag = ctWithTag.subarray(ctWithTag.length - 16);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ct), decipher.final()]);
+};
