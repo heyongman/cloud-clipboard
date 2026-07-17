@@ -141,6 +141,7 @@ const httpRequest = (url, { method = 'GET', headers = {}, body = null, timeoutMs
         const chunks = [];
         res.on('data', chunk => chunks.push(chunk));
         res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+        res.on('error', reject);
     });
     req.on('error', reject);
     req.setTimeout(timeoutMs, () => {
@@ -163,7 +164,10 @@ const httpGet = (url, headers = {}, timeoutMs = 30000) => httpRequest(url, { hea
 // POST JSON，即使 HTTP 错误也返回 status+body（v2board 登录失败返回 500 + JSON message）
 const httpPostJson = (url, payload, headers = {}, timeoutMs = 30000) => {
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
-    const mergedHeaders = { 'Content-Type': 'application/json', ...headers };
-    return httpRequest(url, { method: 'POST', headers: mergedHeaders, body, timeoutMs })
-        .then(({ status, body: respBody }) => ({ status, body: respBody }));
+    const mergedHeaders = {
+        'Content-Type': 'application/json',
+        'Content-Length': body.length,
+        ...headers,
+    };
+    return httpRequest(url, { method: 'POST', headers: mergedHeaders, body, timeoutMs });
 };
