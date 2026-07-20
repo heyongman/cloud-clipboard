@@ -66,6 +66,7 @@ npm test
 - Node 后端文件上传存储：`server-node/app/uploaded-file.js`。
 - Node 后端 AI 模块：`server-node/app/ai`。
 - 订阅转换后端模块：`server-node/app/subscription`。
+- 山海固定订阅源模块：`server-node/app/subscription/shanhai-source.js`，配置项 `server.shanhai`（在 `server-node/app/config.js`）。
 
 ## 前端开发注意事项
 
@@ -102,9 +103,9 @@ npm test
 
 ## 配置与运行数据
 
-- `server-node/config.json`、`history.json`、`subscription.json`、`ai-config.json`、上传文件目录属于本地运行数据，不应作为常规代码改动提交。
+- `server-node/config.json`、`history.json`、`subscription.json`、`ai-config.json`、`shanhai-token.json`、上传文件目录属于本地运行数据，不应作为常规代码改动提交。
 - 默认配置由 `server-node/app/config.js` 生成，包含 `server`、`text`、`file` 三组配置。
-- `server` 配置包含 `historyFile`、`subscriptionFile`、`aiConfigFile`、`storageDir` 等可覆盖运行数据路径的字段。
+- `server` 配置包含 `historyFile`、`subscriptionFile`、`aiConfigFile`、`storageDir` 等可覆盖运行数据路径的字段；`server.shanhai` 控制山海固定订阅源（`enabled`/`email`/`password`/`tokenFile`/`ossUrls`），`shanhai-token.json` 默认存于上传存储目录下，可由 `server.shanhai.tokenFile` 覆盖。
 - `server.prefix` 会被规范化为以 `/` 开头且不以 `/` 结尾的路径；涉及部署子路径时要同时检查前端 `publicPath` 和后端 `prefix` 行为。
 
 ## 文档维护

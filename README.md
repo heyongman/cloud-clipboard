@@ -212,7 +212,15 @@ php build-phar.php
         "history": 10, // 消息历史记录的数量
         "auth": false, // 是否在连接时要求使用密码认证，falsy 值表示不使用
         "historyFile": null, // 自定义历史记录存储路径，默认为当前目录的 history.json
-        "storageDir": null // 自定义文件存储目录，默认为临时文件夹的.cloud-clipboard-storage目录
+        "storageDir": null, // 自定义文件存储目录，默认为临时文件夹的.cloud-clipboard-storage目录
+        "shanhai": {
+            // 山海（ShanHai）固定订阅源，启用后作为订阅转换的第一个上游源，自动登录、缓存 token、获取并 AES 解密订阅
+            "enabled": false, // 是否启用山海源，falsy 值表示不启用
+            "email": "", // 山海 v2board 账号邮箱
+            "password": "", // 山海 v2board 账号密码
+            "tokenFile": null, // 登录 token 缓存文件路径，默认为存储目录下的 shanhai-token.json，鉴权失败会自动重新登录并重试一次
+            "ossUrls": null // 自定义 OSS 镜像列表，省略或设为 null 则使用内置列表
+        }
     },
     "text": {
         "limit": 4096 // 文本的长度限制
@@ -234,6 +242,12 @@ php build-phar.php
 >
 > 如果启用“密码认证”，只有输入正确的密码才能连接到服务端并查看剪贴板内容。
 > 可以将 `server.auth` 字段设为 `true`（随机生成六位密码）或字符串（自定义密码）来启用这个功能，启动服务端后终端会以 `Authorization code: ******` 的格式输出当前使用的密码。
+
+### 订阅转换
+
+Node.js 版服务端提供订阅转换功能：在前端订阅转换页面填写若干上游订阅 URL 与过滤规则，服务端会拉取、解析、去重、过滤并生成一份 Clash/mihomo 配置，通过一个固定 token 的地址 `/subscription/clash?token=<token>` 暴露给客户端订阅。
+
+`server.shanhai` 可选启用一个内置的「山海」固定订阅源。启用后该源会作为第一个上游源，自动完成 v2board 登录（token 缓存到 `shanhai-token.json` 可复用，鉴权失败自动重新登录并重试一次）、拉取订阅并 AES 解密，再与用户填写的其他源合并。山海源对前端透明，仅在订阅转换的错误摘要中可能出现 `[山海]` 标记。
 
 ### HTTP API
 
