@@ -100,7 +100,10 @@ const getPublicSubscriptionYaml = async () => {
     }
 
     const current = await subscriptionStore.read();
-    const result = await convertSubscriptionSources(current);
+    const result = await convertSubscriptionSources({
+        ...current,
+        shanhai: config.server.shanhai,
+    });
     return subscriptionCache.set(cacheKey, result.yaml);
 };
 
@@ -396,7 +399,10 @@ router.post(
     }),
     async ctx => {
         try {
-            const result = await convertSubscriptionSources(ctx.request.body || {});
+            const result = await convertSubscriptionSources({
+                ...(ctx.request.body || {}),
+                shanhai: config.server.shanhai,
+            });
             writeJSON(ctx, 200, formatPreviewResult(result));
         } catch (error) {
             writeJSON(ctx, error.status || 400, {}, error.message || '预览失败');
