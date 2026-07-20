@@ -22,6 +22,13 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             subscriptionFile: null,
             aiConfigFile: null,
             storageDir: null,
+            shanhai: {
+                enabled: false,
+                email: '',
+                password: '',
+                tokenFile: null,
+                ossUrls: null,
+            },
         },
         text: {
             limit: 4096,
@@ -49,6 +56,13 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      subscriptionFile: [String],
  *      aiConfigFile: [String],
  *      storageDir: [String],
+ *      shanhai: {
+ *          enabled: Boolean,
+ *          email: [String],
+ *          password: [String],
+ *          tokenFile: [String],
+ *          ossUrls: [String[]],
+ *      },
  *  },
  *  text: {
  *      limit: Number,
@@ -78,5 +92,17 @@ if (config.server.auth) {
 if (config.file && config.file.expire !== undefined) {
     delete config.file.expire;
 }
+
+// 归一化 shanhai 配置（向后兼容：缺失时按禁用处理）
+const rawShanhai = config.server.shanhai && typeof config.server.shanhai === 'object'
+    ? config.server.shanhai
+    : {};
+config.server.shanhai = {
+    enabled: rawShanhai.enabled === true,
+    email: typeof rawShanhai.email === 'string' ? rawShanhai.email : '',
+    password: typeof rawShanhai.password === 'string' ? rawShanhai.password : '',
+    tokenFile: typeof rawShanhai.tokenFile === 'string' ? rawShanhai.tokenFile : null,
+    ossUrls: Array.isArray(rawShanhai.ossUrls) ? rawShanhai.ossUrls : null,
+};
 
 export default config;
