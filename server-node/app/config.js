@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const defaultConfigPath = path.join(process.cwd(), 'config.json');
@@ -97,11 +98,15 @@ if (config.file && config.file.expire !== undefined) {
 const rawShanhai = config.server.shanhai && typeof config.server.shanhai === 'object'
     ? config.server.shanhai
     : {};
+// tokenFile 默认存于上传存储目录下（与 server-node/app/uploaded-file.js 的 storageFolder 一致）
+const shanhaiStorageDir = config.server.storageDir || path.join(os.tmpdir(), '.cloud-clipboard-storage');
 config.server.shanhai = {
     enabled: rawShanhai.enabled === true,
     email: typeof rawShanhai.email === 'string' ? rawShanhai.email : '',
     password: typeof rawShanhai.password === 'string' ? rawShanhai.password : '',
-    tokenFile: typeof rawShanhai.tokenFile === 'string' ? rawShanhai.tokenFile : null,
+    tokenFile: typeof rawShanhai.tokenFile === 'string' && rawShanhai.tokenFile
+        ? rawShanhai.tokenFile
+        : path.join(shanhaiStorageDir, 'shanhai-token.json'),
     ossUrls: Array.isArray(rawShanhai.ossUrls) ? rawShanhai.ossUrls : null,
 };
 

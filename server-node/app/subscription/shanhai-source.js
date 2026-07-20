@@ -314,8 +314,8 @@ const pendingMap = new Map();
 export const fetchShanhaiSubscription = async ({
     email,
     password,
-    tokenFile = path.join(process.cwd(), 'shanhai-token.json'),
-    ossUrls = DEFAULT_OSS_URLS,
+    tokenFile,
+    ossUrls,
     fetch,
 } = {}) => {
     if (!email || !password) {
@@ -328,14 +328,18 @@ export const fetchShanhaiSubscription = async ({
         downloadSubscription,
     };
 
-    const key = tokenFile;
+    // 解构默认值不覆盖 null（config.js 归一化后为 null），需显式 ?? 兜底
+    const resolvedTokenFile = tokenFile ?? path.join(process.cwd(), 'shanhai-token.json');
+    const resolvedOssUrls = ossUrls ?? DEFAULT_OSS_URLS;
+
+    const key = resolvedTokenFile;
     if (pendingMap.has(key)) {
         return pendingMap.get(key);
     }
 
     const promise = (async () => {
         try {
-            const cached = await readTokenFile(tokenFile);
+            const cached = await readTokenFile(resolvedTokenFile);
             if (cached) {
                 try {
                     return await fetchPlainWithAuth(deps, cached.apiUrl, cached.authData);
@@ -347,8 +351,8 @@ export const fetchShanhaiSubscription = async ({
                 }
             }
             // 无 token 或鉴权失败重登
-            const token = await fullLogin(deps, email, password, ossUrls);
-            await writeTokenFile(tokenFile, token);
+            const token = await fullLogin(deps, email, password, resolvedOssUrls);
+            await writeTokenFile(resolvedTokenFile, token);
             try {
                 // fullLogin 已取到 subscribeUrl，直接复用避免重复鉴权
                 return await fetchPlainWithAuth(deps, token.apiUrl, token.authData, token.subscribeUrl);

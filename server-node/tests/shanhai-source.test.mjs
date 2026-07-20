@@ -295,3 +295,24 @@ test('fetchShanhaiSubscription downloadSubscription 收到正确的 subscribeUrl
     assert.equal(receivedUrl, 'https://sub.example.cn/real-sub');
     assert.ok(sub.toString('utf8').includes('proxies:'));
 });
+
+test('fetchShanhaiSubscription tokenFile/ossUrls 为 null 时用默认值不崩', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'shanhai-'));
+    // 显式传 null（模拟 config.js 归一化后的值），应回退到默认 DEFAULT_OSS_URLS 与 cwd
+    let ossUrlsReceived;
+    const sub = await fetchShanhaiSubscription({
+        email: 'a@b.com',
+        password: 'pw',
+        tokenFile: path.join(tmpDir, 'token.json'),
+        ossUrls: null,
+        fetch: {
+            fetchApiUrl: async (urls) => { ossUrlsReceived = urls; return { apiUrl: 'https://api.example.cn', cfg: {} }; },
+            v2boardLogin: async () => 'JWT-1',
+            getSubscribeInfo: async () => 'https://sub.example.cn/sub',
+            downloadSubscription: async () => Buffer.from('mixed-port: 7890'),
+        },
+    });
+    assert.equal(sub.toString('utf8'), 'mixed-port: 7890');
+    // ossUrls=null 回退到 DEFAULT_OSS_URLS（数组非空）
+    assert.ok(Array.isArray(ossUrlsReceived) && ossUrlsReceived.length > 0);
+});
