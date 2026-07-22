@@ -99,14 +99,13 @@ const rawShanhai = config.server.shanhai && typeof config.server.shanhai === 'ob
     ? config.server.shanhai
     : {};
 // tokenFile 默认存于上传存储目录下（与 server-node/app/uploaded-file.js 的 storageFolder 一致）
-const shanhaiStorageDir = config.server.storageDir || path.join(os.tmpdir(), '.cloud-clipboard-storage');
 config.server.shanhai = {
     enabled: rawShanhai.enabled === true,
     email: typeof rawShanhai.email === 'string' ? rawShanhai.email : '',
     password: typeof rawShanhai.password === 'string' ? rawShanhai.password : '',
     tokenFile: typeof rawShanhai.tokenFile === 'string' && rawShanhai.tokenFile
         ? rawShanhai.tokenFile
-        : path.join(shanhaiStorageDir, 'shanhai-token.json'),
+        : path.join(process.cwd(), 'shanhai-token.json'),
     ossUrls: Array.isArray(rawShanhai.ossUrls) ? rawShanhai.ossUrls : null,
 };
 
