@@ -6,17 +6,23 @@ import zlib from 'node:zlib';
 import http from 'node:http';
 import https from 'node:https';
 
-// ─── 硬编码常量（来自二进制反汇编，平移自 shanhai_decode.py）─────────
-export const OSS_AES_KEY = Buffer.from('4422a60e08c97f30', 'utf8');
-export const OSS_AES_IV = Buffer.from('8c97f304422a60e0', 'utf8');
-export const SUB_PASSWORD = '86f2e72ead6e985e';
-export const SUB_UA = 'securitynet/3.1.2,clash-verge,OpenWrtAPP';
+// ─── 硬编码常量（3.1.9: 解密 /etc/shanhai/brand.vault 得到，平移自 shanhai_decode.py）──
+// brand.vault = AES-128-CBC，密钥/IV 见下 BRAND_SEAL_*；算法与 3.1.2 二进制一致。
+// 3.1.9 起无 Go 二进制，敏感常量封装在 brand.vault，其解密密钥硬编码于
+// openclash_crypto.rb:655-656（BRAND_SEAL_KEY_HEX / BRAND_SEAL_IV_HEX）。
+export const BRAND_SEAL_KEY_HEX = '35bc143e7e9320d0dbf484f0ff27f6ad';
+export const BRAND_SEAL_IV_HEX = '61271da51c7e6c1e145da4710aad1002';
+export const OSS_AES_KEY = Buffer.from('4422a60e08c97f30', 'utf8');   // vault: OSS_AES_KEY（与 3.1.2 一致）
+export const OSS_AES_IV = Buffer.from('8c97f304422a60e0', 'utf8');    // vault: OSS_AES_IV
+export const SUB_PASSWORD = '86f2e72ead6e985e';                       // vault: SUB_AES_PASSWORD
+export const SUB_UA = 'securitynet/3.1.9,clash-verge,OpenWrtAPP';     // vault: SUB_UA（仅版本号升级，订阅下载用）
+export const API_UA = 'Mozilla/5.0 (dart:io) SuperAccelerator,OpenWrtAPP'; // vault: API_UA（3.1.9 新增，v2board API/OSS 用）
 
+// 3.1.9 ipk 内置 oss_url（brand.vault: OSS_URL，逗号分隔）
+// 3.1.2 有 4 个（含 gitee + 2 个 AWS 东京/香港），3.1.9 砍至 2 个，新增山海自建桶。
 export const DEFAULT_OSS_URLS = [
-    'https://raw.giteeusercontent.com/liilo123/4399/raw/master/ConFigOss.json',
-    'https://osnc3.s3.ap-northeast-3.amazonaws.com/opnew/store_oss/2026/06/06/9b42dffe-ec7e-455c-b19a-57ea87884b0f.json',
-    'https://osnc4.s3.ap-east-1.amazonaws.com/opnew/store_oss/2026/06/06/9b42dffe-ec7e-455c-b19a-57ea87884b0f.json',
     'https://oss-1350701856.cos.ap-guangzhou.myqcloud.com/opnew/store_oss/2026/06/06/9b42dffe-ec7e-455c-b19a-57ea87884b0f.json',
+    'https://shanhaioss-1426331524.cos.ap-guangzhou.myqcloud.com/ConFigOss.json',
 ];
 
 const reBase64 = /[^A-Za-z0-9+/=]/g;
@@ -205,11 +211,12 @@ const fetchApiUrl = async (ossUrls) => {
     let lastErr;
     for (const url of ossUrls) {
         try {
-            const body = await httpGet(url, {}, 20000);
+            const body = await httpGet(url, { 'User-Agent': API_UA }, 20000);
             const cfg = decodeOssPayload(body);
             const hosts = cfg.hosts || [];
             if (hosts.length) {
-                return { apiUrl: `${hosts[0]}`.replace(/\/+$/, ''), cfg };
+                // hosts 元素可能带前导空格（实测 ' http://...'），需 trim
+                return { apiUrl: `${hosts[0]}`.trim().replace(/\/+$/, ''), cfg };
             }
             throw new Error('hosts 字段为空');
         } catch (err) {
@@ -222,7 +229,7 @@ const fetchApiUrl = async (ossUrls) => {
 // POST /passport/auth/login → auth_data(JWT)，用于后续 /user/getSubscribe 鉴权
 const v2boardLogin = async (apiUrl, email, password) => {
     const url = `${apiUrl}/api/v1/passport/auth/login`;
-    const { status, body } = await httpPostJson(url, { email, password }, { 'User-Agent': SUB_UA });
+    const { status, body } = await httpPostJson(url, { email, password }, { 'User-Agent': API_UA });
     if (isAuthError({ status, body })) {
         let errData = {};
         try {
@@ -244,7 +251,7 @@ const v2boardLogin = async (apiUrl, email, password) => {
 // GET /user/getSubscribe Authorization: <auth_data JWT> → subscribe_url
 const getSubscribeInfo = async (apiUrl, authData) => {
     const url = `${apiUrl}/api/v1/user/getSubscribe`;
-    const { status, body } = await httpRequest(url, { headers: { Authorization: authData, 'User-Agent': SUB_UA } });
+    const { status, body } = await httpRequest(url, { headers: { Authorization: authData, 'User-Agent': API_UA } });
     if (isAuthError({ status, body })) {
         throw new AuthError('获取订阅信息鉴权失败');
     }
