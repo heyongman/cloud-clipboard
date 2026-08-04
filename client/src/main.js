@@ -31,6 +31,7 @@ const app = new Vue({
             dark: null,
             config: {
                 version: '',
+                prefix: '',
                 text: {
                     limit: 0,
                 },

@@ -154,6 +154,7 @@ router.get('/config', authMiddleware, async ctx => {
         version: process.env.VERSION || 'unknown',
         text: config.text,
         file: config.file,
+        prefix: config.server.prefix || '',
     });
 });
 

@@ -161,6 +161,12 @@ export default {
             this.$root.received = this.$root.received.filter(item => item.id !== this.meta.id);
         },
 
+        // 构建分享内容链接，带上部署 prefix 与房间参数
+        buildContentUrl(id) {
+            const roomQuery = this.$root.room ? `?room=${encodeURIComponent(this.$root.room)}` : '';
+            return `${location.protocol}//${location.host}${this.$root.config.prefix || ''}/content/${id}${roomQuery}`;
+        },
+
         async downloadFile() {
             if (this.downloading) return;
 
@@ -170,8 +176,7 @@ export default {
                     params: { room: this.$root.room },
                 });
 
-                const roomQuery = this.$root.room ? `?room=${encodeURIComponent(this.$root.room)}` : '';
-                const url = `${location.protocol}//${location.host}/content/${this.meta.id}${roomQuery}`;
+                const url = this.buildContentUrl(this.meta.id);
 
                 const link = document.createElement('a');
                 link.href = url;
@@ -204,8 +209,7 @@ export default {
                     await this.$http.post(`share/${this.meta.id}`, null, {
                         params: { room: this.$root.room },
                     });
-                    const roomQuery = this.$root.room ? `?room=${encodeURIComponent(this.$root.room)}` : '';
-                    this.srcPreview = `${location.protocol}//${location.host}/content/${this.meta.id}${roomQuery}`;
+                    this.srcPreview = this.buildContentUrl(this.meta.id);
                 } catch (error) {
                     if (error.response && error.response.data.msg) {
                         this.$toast(`Preview failed: ${error.response.data.msg}`);
@@ -244,7 +248,7 @@ export default {
                     params: { room: this.$root.room },
                 });
 
-                const url = `${location.protocol}//${location.host}/content/${this.meta.id}${this.$root.room ? `?room=${this.$root.room}` : ''}`;
+                const url = this.buildContentUrl(this.meta.id);
                 const result = await copyToClipboard(url);
 
                 if (result.success) {
