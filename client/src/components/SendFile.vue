@@ -211,7 +211,7 @@ export default {
         }
 
         // 3. 使用并发池执行上传任务
-        await this.runInConcurrentPool(uploadPromises, 5); // 设置并发数为 5
+        await this.runInConcurrentPool(uploadPromises, this.$root.config.file.concurrency); // 设置并发数为 5
 
         // 4. 通知后端所有分片已上传完毕
         await this.$http.post(`upload/finish/${uuid}`, null, {

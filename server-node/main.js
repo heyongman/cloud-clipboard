@@ -125,11 +125,15 @@ if (config.server.uds) {
     server.listen(udsPath, () => fs.chmodSync(udsPath, udsPerm));
 }
 
-const server = createServer(false);
-server.listen(config.server.port);
+if (config.server.port) {
+    const server = createServer(false);
+    server.listen(config.server.port);
+}
 
-const httpsServer = createServer(true);
-httpsServer.listen(config.server.httpsPort);
+if (config.server.httpsPort) {
+    const httpsServer = createServer(true);
+    httpsServer.listen(config.server.httpsPort);
+}
 
 console.log([
     '',
