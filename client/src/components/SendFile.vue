@@ -186,19 +186,26 @@ export default {
           const chunk = file.slice(start, end);
 
           // 创建一个 promise 函数，以便并发池调用
-          const task = () => this.$http.post(`upload/chunk/${uuid}/${i}`, chunk, {
-            headers: { 'Content-Type': 'application/octet-stream' },
-            onUploadProgress: e => {
-              // 这个进度是单个分片的，需要转换成总进度
-              // 注意：由于并行，这里需要更复杂的进度计算
-              // 一个简单的方式是上传成功后再加上分片大小
-            },
-          }).then(() => {
-            // 更新已上传的总大小
-            // 使用 this.$set 保证视图更新
-            const currentTotal = this.uploadedSizes[fileIndex] + chunk.size;
-            this.$set(this.uploadedSizes, fileIndex, currentTotal);
-          });
+          const task = async () => {
+            let lastError;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                await this.$http.post(`upload/chunk/${uuid}/${i}`, chunk, {
+                  headers: {
+                    'Content-Type': 'application/octet-stream',
+                  },
+                });
+                const currentTotal = this.uploadedSizes[fileIndex] + chunk.size;
+                this.$set(this.uploadedSizes, fileIndex, currentTotal);
+                return;
+              } catch (error) {
+                lastError = error;
+                if (attempt === 2) break;
+                await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
+              }
+            }
+            throw new Error(`分片 ${i} 上传失败: ${lastError?.message || '网络错误'}`);
+          };
 
           uploadPromises.push(task);
         }
@@ -230,7 +237,7 @@ export default {
               results[taskIndex] = await task();
             } catch (error) {
               // 如果一个分片失败，则抛出错误，中断整个上传
-              throw new Error(`分片 ${taskIndex} 上传失败: ${error.message}`);
+              throw error;
             }
           }
         };

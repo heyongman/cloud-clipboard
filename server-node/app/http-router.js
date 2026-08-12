@@ -34,6 +34,12 @@ import {
     storageFolder,
 } from './uploaded-file.js';
 import {
+    buildAccelRedirect,
+    formatContentRange,
+    parseByteRange,
+    RangeNotSatisfiableError,
+} from './file-transfer.js';
+import {
     writeJSON,
     createThumbnail,
 } from './util.js';
@@ -92,6 +98,90 @@ const formatPreviewResult = result => ({
     errors: result.errors,
 });
 
+const sendStoredFile = async (ctx, file, {disposition = 'attachment'} = {}) => {
+    const fileSize = (await fs.promises.stat(file.path)).size;
+    let range;
+    try {
+        range = parseByteRange(ctx.get('range'), fileSize);
+    } catch (error) {
+        if (!(error instanceof RangeNotSatisfiableError)) throw error;
+        ctx.status = 416;
+        ctx.set('Content-Range', `bytes */${fileSize}`);
+        return;
+    }
+
+    ctx.type = path.extname(file.name) || 'application/octet-stream';
+    if (disposition === 'inline') {
+        ctx.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    } else {
+        ctx.attachment(file.name, {type: 'inline'});
+    }
+    ctx.compress = false;
+    ctx.set('Cache-Control', 'no-transform');
+    ctx.set('Accept-Ranges', 'bytes');
+    if (range.status === 206) {
+        ctx.status = 206;
+        ctx.set('Content-Range', formatContentRange({
+            start: range.start,
+            end: range.end,
+            fileSize,
+        }));
+    }
+    ctx.set('Content-Length', `${range.length}`);
+
+    if (config.server.nginx.enabled) {
+        ctx.set('X-Accel-Redirect', buildAccelRedirect(config.server.nginx.internalPath, file.uuid));
+        // Nginx takes over the response and performs the actual file read/sendfile.
+        ctx.respond = false;
+        ctx.res.end();
+        return;
+    }
+
+    ctx.body = fs.createReadStream(file.path, range.status === 206
+        ? {start: range.start, end: range.end}
+        : undefined);
+};
+
+const publishFileMessage = async (file, room) => {
+    if (file.messageResult) return file.messageResult;
+    if (!file.publishPromise) {
+        file.publishPromise = (async () => {
+            const message = {
+                event: 'receive',
+                data: {
+                    id: -1,
+                    type: 'file',
+                    room,
+                    name: file.name,
+                    size: file.size,
+                    cache: file.uuid,
+                },
+            };
+            if (file.size <= 33554432) {
+                try {
+                    message.data.thumbnail = await createThumbnail(file.path);
+                } catch {}
+            }
+            message.data.id = messageQueue.counter;
+            messageQueue.enqueue(message);
+            file.published = true;
+            file.messageResult = message;
+            return message;
+        })();
+    }
+    return file.publishPromise;
+};
+
+const formatFileContentUrl = (ctx, message) => (
+    `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${message.data.room ? `?room=${encodeURIComponent(message.data.room)}` : ''}`
+);
+
+const findFileMessage = file => messageQueue.queue.find(e => (
+    e.event === 'receive' &&
+    e.data.type === 'file' &&
+    e.data.cache === file.uuid
+));
+
 const getPublicSubscriptionYaml = async () => {
     const cacheKey = 'public-subscription-yaml';
     const cached = subscriptionCache.get(cacheKey);
@@ -108,7 +198,7 @@ const getPublicSubscriptionYaml = async () => {
 };
 
 const saveHistory = () => fs.promises.writeFile(historyPath, JSON.stringify({
-    file: Array.from(uploadFileMap.values()).map(e => ({
+    file: Array.from(uploadFileMap.values()).filter(e => e.published).map(e => ({
         name: e.name,
         uuid: e.uuid,
         size: e.size,
@@ -616,41 +706,28 @@ router.post(
         },
     }),
     async ctx => {
+        let file;
         try {
             const formfile = ctx.request.files.file;
             if (!formfile) throw new Error('没有上传的文件');
-            const file = new UploadedFile(formfile.originalFilename);
+            file = new UploadedFile(formfile.originalFilename);
             uploadFileMap.set(file.uuid, file);
             file.size = formfile.size;
             await fs.promises.copyFile(formfile.filepath, file.path);
             await fs.promises.unlink(formfile.filepath);
             await file.finish();
-
-            const message = {
-                event: 'receive',
-                data: {
-                    id: -1, // 在生成缩略图之后进队列之前再设定
-                    type: 'file',
-                    room: ctx.query.room || '',
-                    name: file.name,
-                    size: file.size,
-                    cache: file.uuid,
-                },
-            };
-            if (file.size <= 33554432) {
-                try {
-                    message.data.thumbnail = await createThumbnail(file.path);
-                } catch {}
-            }
-            message.data.id = messageQueue.counter;
-            messageQueue.enqueue(message);
+            const message = await publishFileMessage(file, ctx.query.room || '');
 
             writeJSON(ctx, 200, {
-                url: `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
+                url: formatFileContentUrl(ctx, message),
             });
             saveHistory();
         } catch (error) {
-            writeJSON(ctx, 400, error.message || error);
+            if (file && !file.published) {
+                await file.remove();
+                uploadFileMap.delete(file.uuid);
+            }
+            writeJSON(ctx, 400, {}, error.message || `${error}`);
         }
     }
 );
@@ -663,10 +740,13 @@ router.post(
         try {
             const { filename, size } = ctx.request.body;
             if (!filename || typeof size !== 'number') {
-                return writeJSON(ctx, 400, '需要提供 filename 和 size');
+                return writeJSON(ctx, 400, {}, '需要提供 filename 和 size');
+            }
+            if (!Number.isSafeInteger(size) || size <= 0) {
+                return writeJSON(ctx, 400, {}, '文件大小必须为正整数');
             }
             if (size > config.file.limit) {
-                return writeJSON(ctx, 400, '文件大小超过限制');
+                return writeJSON(ctx, 400, {}, '文件大小超过限制');
             }
 
             const file = new UploadedFile(filename, size);
@@ -695,177 +775,74 @@ router.post('/upload/chunk/:uuid([0-9a-f]{32})/:chunkIndex(\\d+)', authMiddlewar
             throw new Error('无效的 UUID');
         }
 
-        const offset = parseInt(chunkIndex, 10) * config.file.chunk;
-        const expectedChunkSize = Math.min(config.file.chunk, file.size - offset);
-
-        if (offset < 0 || offset >= file.size) {
-            throw new Error('分片索引超出范围');
-        }
-
-        // 使用 Promise 包装流式处理，以便在 async/await 中使用
-        await new Promise((resolve, reject) => {
-            // 'r+' 标志表示以读写模式打开文件，如果文件不存在则失败。
-            // 这很重要，确保我们写入的是之前创建好的文件，而不是新文件。
-            const writableStream = fs.createWriteStream(file.path, {
-                flags: 'r+',
-                start: offset
-            });
-            let receivedBytes = 0;
-
-            ctx.req.on('data', chunk => {
-                receivedBytes += chunk.length;
-                if (receivedBytes > expectedChunkSize) {
-                    writableStream.destroy(new Error('分片大小超出预期'));
-                    ctx.req.destroy();
-                }
-            });
-
-            // 将请求的可读流直接“管道”到文件的可写流
-            ctx.req.pipe(writableStream);
-
-            // 监听流的结束事件
-            writableStream.on('finish', () => {
-                if (receivedBytes !== expectedChunkSize) {
-                    reject(new Error('分片大小不匹配'));
-                    return;
-                }
-                file.uploadedSize += receivedBytes;
-                resolve();
-            });
-
-            // 监听错误事件
-            writableStream.on('error', (err) => {
-                console.error('文件写入流错误:', err);
-                reject(new Error('文件分片写入失败'));
-            });
-
-            ctx.req.on('error', (err) => {
-                console.error('请求流错误:', err);
-                // 中断写入流并拒绝 Promise
-                writableStream.destroy();
-                reject(new Error('数据传输中断'));
-            });
-        });
-
-        // await file.write(data, parseInt(chunkIndex, 10));
+        const contentLength = ctx.get('content-length');
+        const declaredLength = contentLength ? Number.parseInt(contentLength, 10) : null;
+        await file.writeStream(
+            ctx.req,
+            Number.parseInt(chunkIndex, 10),
+            Number.isSafeInteger(declaredLength) ? declaredLength : null,
+            config.file.chunk,
+        );
         writeJSON(ctx);
     } catch (error) {
-        writeJSON(ctx, 400, error.message || error);
+        ctx.req.resume();
+        writeJSON(ctx, 400, {}, error.message || `${error}`);
     }
 });
 
 router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
+    let file;
+    let preserveIncompleteUpload = false;
     try {
-        const file = uploadFileMap.get(ctx.params.uuid);
+        file = uploadFileMap.get(ctx.params.uuid);
         if (!file) {
             throw new Error('无效的 UUID');
         }
+        if (file.published) {
+            const message = file.messageResult || findFileMessage(file);
+            if (!message) {
+                throw new Error('文件消息不存在');
+            }
+            return writeJSON(ctx, 200, {
+                url: formatFileContentUrl(ctx, message),
+            });
+        }
+        if (!file.isUploadComplete(config.file.chunk)) {
+            preserveIncompleteUpload = true;
+            throw new Error('文件分片尚未全部上传');
+        }
         await file.finish();
         await file.close(); // 关闭文件句柄
-
-
-        const message = {
-            event: 'receive',
-            data: {
-                id: -1, // 在生成缩略图之后进队列之前再设定
-                type: 'file',
-                room: ctx.query.room || '',
-                name: file.name,
-                size: file.size,
-                cache: file.uuid,
-            },
-        };
-        if (file.size <= 33554432) {
-            try {
-                message.data.thumbnail = await createThumbnail(file.path);
-            } catch {}
-        }
-        message.data.id = messageQueue.counter;
-        messageQueue.enqueue(message);
+        const message = await publishFileMessage(file, ctx.query.room || '');
 
         writeJSON(ctx, 200, {
-            url: `${ctx.protocol}://${ctx.request.host}${config.server.prefix}/content/${message.data.id}${ctx.query.room ? `?room=${encodeURIComponent(ctx.query.room)}` : ''}`,
+            url: formatFileContentUrl(ctx, message),
         });
         saveHistory();
     } catch (error) {
-        writeJSON(ctx, 400, error.message || error);
+        if (file && !file.published && !preserveIncompleteUpload) {
+            await file.remove();
+            uploadFileMap.delete(file.uuid);
+        }
+        writeJSON(ctx, 400, {}, error.message || `${error}`);
     }
 });
 
 router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'], authMiddleware, async ctx => {
     const file = uploadFileMap.get(ctx.params.uuid);
-    if (!file || !fs.existsSync(file.path)) {
+    if (!file || !file.published || !fs.existsSync(file.path)) {
         return ctx.status = 404;
     }
-    ctx.attachment(file.name, {type: 'inline'});
-    ctx.compress = false;
-    ctx.set('Cache-Control', 'no-transform');
-    const fileSize = (await fs.promises.stat(file.path)).size;
-    ctx.set('Accept-Ranges', 'bytes');
-
-    const rangeHeader = ctx.get('range');
-    if (!rangeHeader) {
-        ctx.set('Content-Length', `${fileSize}`);
-        ctx.body = fs.createReadStream(file.path);
-        return;
-    }
-
-    if (fileSize === 0) {
-        ctx.status = 416;
-        ctx.set('Content-Range', 'bytes */0');
-        return;
-    }
-
-    const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-    if (!rangeMatch) {
-        ctx.status = 416;
-        ctx.set('Content-Range', `bytes */${fileSize}`);
-        return;
-    }
-
-    let rangeStart = rangeMatch[1] === '' ? null : parseInt(rangeMatch[1], 10);
-    let rangeEnd = rangeMatch[2] === '' ? null : parseInt(rangeMatch[2], 10);
-
-    if (rangeStart === null && rangeEnd === null) {
-        ctx.status = 416;
-        ctx.set('Content-Range', `bytes */${fileSize}`);
-        return;
-    }
-
-    if (rangeStart === null) {
-        const suffixLength = rangeEnd;
-        if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+    try {
+        await sendStoredFile(ctx, file);
+    } catch (error) {
+        if (error instanceof RangeNotSatisfiableError) {
             ctx.status = 416;
-            ctx.set('Content-Range', `bytes */${fileSize}`);
+            ctx.set('Content-Range', `bytes */${error.fileSize}`);
             return;
         }
-        rangeStart = Math.max(fileSize - suffixLength, 0);
-        rangeEnd = fileSize - 1;
-    } else {
-        if (!Number.isInteger(rangeStart) || rangeStart < 0 || rangeStart >= fileSize) {
-            ctx.status = 416;
-            ctx.set('Content-Range', `bytes */${fileSize}`);
-            return;
-        }
-        if (rangeEnd === null) {
-            rangeEnd = fileSize - 1;
-        } else if (!Number.isInteger(rangeEnd) || rangeEnd < rangeStart) {
-            ctx.status = 416;
-            ctx.set('Content-Range', `bytes */${fileSize}`);
-            return;
-        } else {
-            rangeEnd = Math.min(rangeEnd, fileSize - 1);
-        }
+        throw error;
     }
-
-    const contentLength = rangeEnd - rangeStart + 1;
-    ctx.status = 206;
-    ctx.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${fileSize}`);
-    ctx.set('Content-Length', `${contentLength}`);
-    ctx.body = fs.createReadStream(file.path, {
-        start: rangeStart,
-        end: rangeEnd,
-    });
 });
 
 router.delete('/file/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
@@ -915,80 +892,19 @@ router.get('/content/:id([0-9]+)', async ctx => {
             }
 
             const file = uploadFileMap.get(message.data.cache);
-            if (!file || !fs.existsSync(file.path)) {
+            if (!file || !file.published || !fs.existsSync(file.path)) {
                 return ctx.status = 404;
             }
-            ctx.type = path.extname(file.name) || 'application/octet-stream';
-            ctx.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
-            ctx.compress = false;
-            ctx.set('Cache-Control', 'no-transform');
-
-            const fileSize = (await fs.promises.stat(file.path)).size;
-            ctx.set('Accept-Ranges', 'bytes');
-
-            const rangeHeader = ctx.get('range');
-            if (!rangeHeader) {
-                ctx.set('Content-Length', `${fileSize}`);
-                ctx.body = fs.createReadStream(file.path);
-                break;
-            }
-
-            if (fileSize === 0) {
-                ctx.status = 416;
-                ctx.set('Content-Range', 'bytes */0');
-                break;
-            }
-
-            const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-            if (!rangeMatch) {
-                ctx.status = 416;
-                ctx.set('Content-Range', `bytes */${fileSize}`);
-                break;
-            }
-
-            let rangeStart = rangeMatch[1] === '' ? null : parseInt(rangeMatch[1], 10);
-            let rangeEnd = rangeMatch[2] === '' ? null : parseInt(rangeMatch[2], 10);
-
-            if (rangeStart === null && rangeEnd === null) {
-                ctx.status = 416;
-                ctx.set('Content-Range', `bytes */${fileSize}`);
-                break;
-            }
-
-            if (rangeStart === null) {
-                const suffixLength = rangeEnd;
-                if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
+            try {
+                await sendStoredFile(ctx, file, {disposition: 'inline'});
+            } catch (error) {
+                if (error instanceof RangeNotSatisfiableError) {
                     ctx.status = 416;
-                    ctx.set('Content-Range', `bytes */${fileSize}`);
-                    break;
+                    ctx.set('Content-Range', `bytes */${error.fileSize}`);
+                    return;
                 }
-                rangeStart = Math.max(fileSize - suffixLength, 0);
-                rangeEnd = fileSize - 1;
-            } else {
-                if (!Number.isInteger(rangeStart) || rangeStart < 0 || rangeStart >= fileSize) {
-                    ctx.status = 416;
-                    ctx.set('Content-Range', `bytes */${fileSize}`);
-                    break;
-                }
-                if (rangeEnd === null) {
-                    rangeEnd = fileSize - 1;
-                } else if (!Number.isInteger(rangeEnd) || rangeEnd < rangeStart) {
-                    ctx.status = 416;
-                    ctx.set('Content-Range', `bytes */${fileSize}`);
-                    break;
-                } else {
-                    rangeEnd = Math.min(rangeEnd, fileSize - 1);
-                }
+                throw error;
             }
-
-            const contentLength = rangeEnd - rangeStart + 1;
-            ctx.status = 206;
-            ctx.set('Content-Range', `bytes ${rangeStart}-${rangeEnd}/${fileSize}`);
-            ctx.set('Content-Length', `${contentLength}`);
-            ctx.body = fs.createReadStream(file.path, {
-                start: rangeStart,
-                end: rangeEnd,
-            });
             break;
     }
 });
@@ -1023,6 +939,7 @@ if (fs.existsSync(historyPath)) {
         f.path = path.join(storageFolder, f.uuid);
         f.size = e.size;
         f.uploadTime = e.uploadTime;
+        f.published = true;
         uploadFileMap.set(e.uuid, f);
     });
     (history.receive || []).forEach(e => {
@@ -1038,6 +955,36 @@ if (fs.existsSync(historyPath)) {
         });
     });
 }
+
+const INCOMPLETE_UPLOAD_TTL_SECONDS = 60 * 60;
+const cleanupIncompleteUploads = async () => {
+    const now = Date.now() / 1000;
+    let changed = false;
+    for (const [uuid, file] of uploadFileMap) {
+        if (file.published || !file.fileHandle || now - file.uploadTime <= INCOMPLETE_UPLOAD_TTL_SECONDS) {
+            continue;
+        }
+        await file.remove();
+        uploadFileMap.delete(uuid);
+        changed = true;
+    }
+    if (changed) await saveHistory();
+};
+
+// Do not keep an incomplete upload open indefinitely after a process restart.
+for (const [uuid, file] of uploadFileMap) {
+    if (!file.published) {
+        file.remove();
+        uploadFileMap.delete(uuid);
+    }
+}
+
+const incompleteUploadCleanupTimer = setInterval(() => {
+    cleanupIncompleteUploads().catch(error => {
+        console.error('清理未完成上传失败:', error.message);
+    });
+}, 10 * 60 * 1000);
+incompleteUploadCleanupTimer.unref?.();
 
 // 定期清理过期的分享标记（每小时执行一次）
 setInterval(() => {

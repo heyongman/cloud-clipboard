@@ -17,7 +17,7 @@ class UploadedFile {
      */
     constructor(name, size) {
         this.name = name;
-        this.size = size;
+        this.size = Number.isSafeInteger(size) ? size : 0;
         this.uuid = crypto.randomBytes(16).toString('hex');
         this.path = path.join(storageFolder, this.uuid);
         /** @type {Number} */
@@ -25,6 +25,11 @@ class UploadedFile {
         this.writePromise = Promise.resolve();
         this.uploadedSize = 0;
         this.fileHandle = null; // 用于存储文件句柄
+        this.uploadedChunks = new Set();
+        this.chunkPromises = new Map();
+        this.published = false;
+        this.messageResult = null;
+        this.publishPromise = null;
     }
 
     /**
@@ -32,10 +37,92 @@ class UploadedFile {
      */
     async open() {
         // 'w' 模式会创建或清空文件
-        this.fileHandle = await fs.promises.open(this.path, 'w');
+        this.fileHandle = await fs.promises.open(this.path, 'w+');
         // 预分配文件大小，可以提高性能并减少磁盘碎片
         if (this.size > 0) {
             await this.fileHandle.truncate(this.size);
+        }
+    }
+
+    getChunkInfo(chunkIndex, chunkSize = config.file.chunk) {
+        if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || !Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
+            throw new Error('分片索引无效');
+        }
+        if (!Number.isSafeInteger(this.size) || this.size <= 0) {
+            throw new Error('文件大小无效');
+        }
+
+        const chunksCount = Math.ceil(this.size / chunkSize);
+        if (chunkIndex >= chunksCount) {
+            throw new Error('分片索引超出范围');
+        }
+
+        const offset = chunkIndex * chunkSize;
+        return {
+            offset,
+            size: Math.min(chunkSize, this.size - offset),
+            chunksCount,
+        };
+    }
+
+    isUploadComplete(chunkSize = config.file.chunk) {
+        if (this.size <= 0) return false;
+        const {chunksCount} = this.getChunkInfo(0, chunkSize);
+        return this.uploadedChunks.size === chunksCount && this.uploadedSize === this.size;
+    }
+
+    /**
+     * Stream one request body into its fixed file offset. Repeated chunk
+     * requests are idempotent so clients can safely retry after a timeout.
+     */
+    async writeStream(stream, chunkIndex, contentLength = null, chunkSize = config.file.chunk) {
+        const info = this.getChunkInfo(chunkIndex, chunkSize);
+        if (contentLength !== null && contentLength !== undefined && contentLength !== info.size) {
+            throw new Error('分片长度与预期不符');
+        }
+        if (!this.fileHandle) {
+            throw new Error('文件未打开，请先调用 open()');
+        }
+
+        const existing = this.chunkPromises.get(chunkIndex);
+        if (this.uploadedChunks.has(chunkIndex)) {
+            stream.resume();
+            return {duplicate: true, bytes: info.size};
+        }
+        if (existing) {
+            stream.resume();
+            await existing;
+            return {duplicate: true, bytes: info.size};
+        }
+
+        const writePromise = (async () => {
+            let receivedBytes = 0;
+            try {
+                for await (const data of stream) {
+                    if (!Buffer.isBuffer(data)) continue;
+                    if (receivedBytes + data.length > info.size) {
+                        throw new Error('分片大小超出预期');
+                    }
+                    await this.fileHandle.write(data, 0, data.length, info.offset + receivedBytes);
+                    receivedBytes += data.length;
+                }
+                if (receivedBytes !== info.size) {
+                    throw new Error('分片大小与预期不符');
+                }
+                this.uploadedChunks.add(chunkIndex);
+                this.uploadedSize += receivedBytes;
+                return {duplicate: false, bytes: receivedBytes};
+            } catch (error) {
+                stream.destroy();
+                throw error;
+            }
+        })();
+
+        this.chunkPromises.set(chunkIndex, writePromise);
+        try {
+            return await writePromise;
+        } finally {
+            this.chunkPromises.delete(chunkIndex);
         }
     }
 
@@ -49,21 +136,25 @@ class UploadedFile {
             throw new Error('文件未打开，请先调用 open()');
         }
 
-        const offset = chunkIndex * config.file.chunk;
-
-        if (offset + data.length > this.size) {
-            throw new Error('写入数据超出文件总大小');
+        if (this.uploadedChunks.has(chunkIndex)) {
+            return {duplicate: true, bytes: data.length};
         }
 
-        // 并行写入，无需 promise 链
+        const {offset, size} = this.getChunkInfo(chunkIndex);
+        if (data.length !== size) {
+            throw new Error('分片长度与预期不符');
+        }
         await this.fileHandle.write(data, 0, data.length, offset);
+        this.uploadedChunks.add(chunkIndex);
         this.uploadedSize += data.length;
+        return {duplicate: false, bytes: data.length};
     }
 
     /**
      * 关闭文件句柄
      */
     async close() {
+        await Promise.allSettled(this.chunkPromises.values());
         if (this.fileHandle) {
             await this.fileHandle.close();
             this.fileHandle = null;
@@ -71,15 +162,21 @@ class UploadedFile {
     }
 
     finish() {
-        this.writePromise = this.writePromise.then(() => {
-            console.log('消耗时间:', Date.now() / 1000 - this.uploadTime)
+        this.writePromise = this.writePromise.then(async () => {
+            await Promise.all(this.chunkPromises.values());
             this.uploadTime = Math.round(Date.now() / 1000);
         });
         return this.writePromise;
     }
 
     remove() {
-        this.writePromise = this.writePromise.then(() => fs.promises.rm(this.path)).catch(() => {});
+        this.writePromise = this.writePromise
+            .then(async () => {
+                await Promise.allSettled(this.chunkPromises.values());
+                await this.close();
+                await fs.promises.rm(this.path, {force: true});
+            })
+            .catch(() => {});
         return this.writePromise;
     }
 }

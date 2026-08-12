@@ -213,6 +213,10 @@ php build-phar.php
         "auth": false, // 是否在连接时要求使用密码认证，falsy 值表示不使用
         "historyFile": null, // 自定义历史记录存储路径，默认为当前目录的 history.json
         "storageDir": null, // 自定义文件存储目录，默认为临时文件夹的.cloud-clipboard-storage目录
+        "nginx": {
+            "enabled": false,
+            "internalPath": "/_cloud_clipboard_files"
+        },
         "shanhai": {
             // 山海（ShanHai）固定订阅源，启用后作为订阅转换的第一个上游源，自动登录、缓存 token、获取并 AES 解密订阅
             "enabled": false, // 是否启用山海源，falsy 值表示不启用
@@ -228,7 +232,12 @@ php build-phar.php
     "file": {
         "expire": 3600, // 上传文件的有效期，超过有效期后自动删除，单位为秒
         "chunk": 1048576, // 上传文件的分片大小，不能超过 5 MB，单位为 byte
-        "limit": 104857600 // 上传文件的大小限制，单位为 byte
+        "limit": 104857600, // 上传文件的大小限制，单位为 byte
+        "download": {
+            "threshold": 33554432,
+            "chunk": 8388608,
+            "concurrency": 4
+        }
     }
 }
 ```
@@ -242,6 +251,21 @@ php build-phar.php
 >
 > 如果启用“密码认证”，只有输入正确的密码才能连接到服务端并查看剪贴板内容。
 > 可以将 `server.auth` 字段设为 `true`（随机生成六位密码）或字符串（自定义密码）来启用这个功能，启动服务端后终端会以 `Authorization code: ******` 的格式输出当前使用的密码。
+
+#### 大文件下载与 Nginx 部署
+
+大文件下载在支持 File System Access API 的浏览器中会弹出保存位置，并使用多个 HTTP Range 请求并行下载，数据直接写入目标文件，不在浏览器内存中拼接完整 Blob。其他浏览器会降级为普通流式下载。
+
+Node 服务端默认直接以文件流响应。若使用 Nginx，可开启 server.nginx.enabled，由 Node 完成认证和分享链接校验后返回 X-Accel-Redirect，Nginx 再使用 sendfile 直出文件。示例配置见 deploy/nginx/cloud-clipboard.conf。
+
+启用时必须同时满足：
+
+- server.storageDir 是绝对路径，并且 Node 与 Nginx 看到的是同一个目录；Nginx worker 对该目录有读取权限。
+- server.nginx.internalPath 与 Nginx 的 location internal 配置完全一致。
+- 如果配置了 server.prefix，示例中的 /upload/chunk/ 和内部路径要按实际部署路径调整。
+- 分片上传 location 保持 proxy_request_buffering off，这样 Nginx 不会先把请求体写入临时文件；Node 会将请求流直接写入预分配文件的对应偏移。
+
+这能减少上传链路中的中间临时文件和额外复制，但网络接收和最终磁盘写入仍然存在，不能称为端到端字面意义的“零拷贝”。
 
 ### 订阅转换
 

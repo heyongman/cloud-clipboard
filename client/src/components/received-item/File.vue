@@ -19,7 +19,18 @@
                             :title="meta.name"
                         >{{meta.name}}</div>
                         <div class="caption">
-                            {{meta.size | prettyFileSize}}
+                            <template v-if="downloading && downloadedSize">
+                                {{downloadedSize | prettyFileSize}} / {{meta.size | prettyFileSize}}
+                            </template>
+                            <template v-else>
+                                {{meta.size | prettyFileSize}}
+                            </template>
+                            <v-progress-linear
+                                v-if="downloading && downloadedSize"
+                                :value="downloadProgress * 100"
+                                height="3"
+                                class="mt-1"
+                            ></v-progress-linear>
                         </div>
                     </div>
 
@@ -121,6 +132,11 @@ import {
     mdiMovieSearchOutline,
 } from '@mdi/js';
 import { copyToClipboard } from '@/util.js';
+import {
+    DEFAULT_DOWNLOAD_CONFIG,
+    downloadRangesToFile,
+    normalizeDownloadConfig,
+} from '@/utils/file-download.mjs';
 
 export default {
     name: 'received-file',
@@ -140,6 +156,7 @@ export default {
             srcPreview: null,
             sharingLoading: false,
             downloading: false,
+            downloadedSize: 0,
             mdiContentCopy,
             mdiDownload,
             mdiClose,
@@ -154,6 +171,9 @@ export default {
         },
         isPreviewableAudio() {
             return this.meta.name.match(/\.(wav|ogg|opus|m4a|flac)$/gi);
+        },
+        downloadProgress() {
+            return this.meta.size > 0 ? Math.min(this.downloadedSize / this.meta.size, 1) : 0;
         },
     },
     methods: {
@@ -171,26 +191,79 @@ export default {
             if (this.downloading) return;
 
             this.downloading = true;
+            this.downloadedSize = 0;
+            let writable = null;
+            let fileHandle = null;
             try {
+                const downloadConfig = normalizeDownloadConfig(
+                    this.$root.config.file?.download || DEFAULT_DOWNLOAD_CONFIG,
+                );
+
+                const useStreamingDownload = this.meta.size >= downloadConfig.threshold
+                    && typeof window.showSaveFilePicker === 'function';
+
+                if (useStreamingDownload) {
+                    try {
+                        fileHandle = await window.showSaveFilePicker({
+                            suggestedName: this.meta.name,
+                        });
+                    } catch (error) {
+                        if (error?.name === 'AbortError') return;
+                        // Permission/security errors fall back to the browser's native download.
+                        fileHandle = null;
+                    }
+                }
+
                 await this.$http.post(`share/${this.meta.id}`, null, {
                     params: { room: this.$root.room },
                 });
 
                 const url = this.buildContentUrl(this.meta.id);
 
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = this.meta.name;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+                if (fileHandle) {
+                    writable = await fileHandle.createWritable();
+                    await downloadRangesToFile({
+                        url,
+                        fileSize: this.meta.size,
+                        chunkSize: downloadConfig.chunk,
+                        concurrency: downloadConfig.concurrency,
+                        writable,
+                        onProgress: bytes => {
+                            this.downloadedSize = Math.max(0, this.downloadedSize + bytes);
+                        },
+                    });
+                    await writable.close();
+                    writable = null;
+                    this.$toast('文件下载完成');
+                } else {
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = this.meta.name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
             } catch (error) {
+                if (error?.fallback) {
+                    const link = document.createElement('a');
+                    link.href = this.buildContentUrl(this.meta.id);
+                    link.download = this.meta.name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    return;
+                }
                 if (error.response && error.response.data.msg) {
                     this.$toast(`File download failed: ${error.response.data.msg}`);
                 } else {
                     this.$toast('File download failed');
                 }
             } finally {
+                if (writable) {
+                    try {
+                        await writable.abort();
+                    } catch {}
+                }
                 this.downloading = false;
             }
         },

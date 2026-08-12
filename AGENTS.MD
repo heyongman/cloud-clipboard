@@ -12,8 +12,8 @@
 
 - 本项目是在线剪贴板共享工具。
 - 前端位于 `client`，技术栈为 Vue 2、Vue CLI、Vuetify 2、axios、vue-router。
-- 当前主要后端位于 `server-node`，技术栈为 Node.js 18+、Koa、`@koa/router`，使用 ESM 模块。
-- `server` 目录是 PHP/Swoole 版本后端，除非任务明确要求维护 PHP 版本，默认优先修改 `server-node`。
+- 当前后端位于 `server-node`，技术栈为 Node.js 18+、Koa、`@koa/router`，使用 ESM 模块。
+- `server` 目录是 PHP/Swoole 版本后端，已经废弃，默认修改 `server-node`。
 - `docs/superpowers` 保存历史规格和计划文档，可用于理解已有功能背景。
 
 ## 常用命令

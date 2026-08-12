@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+    DEFAULT_DOWNLOAD_CONFIG,
+    normalizeDownloadConfig,
+} from './file-transfer.js';
+
 const defaultConfigPath = path.join(process.cwd(), 'config.json');
 
 if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
@@ -23,6 +28,10 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             subscriptionFile: null,
             aiConfigFile: null,
             storageDir: null,
+            nginx: {
+                enabled: false,
+                internalPath: '/_cloud_clipboard_files',
+            },
             shanhai: {
                 enabled: false,
                 email: '',
@@ -37,6 +46,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
         file: {
             chunk: 2097152,
             limit: 268435456,
+            download: DEFAULT_DOWNLOAD_CONFIG,
         },
     }, null, 4));
 }
@@ -57,6 +67,10 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      subscriptionFile: [String],
  *      aiConfigFile: [String],
  *      storageDir: [String],
+ *      nginx: {
+ *          enabled: Boolean,
+ *          internalPath: String,
+ *      },
  *      shanhai: {
  *          enabled: Boolean,
  *          email: [String],
@@ -71,6 +85,11 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *  file: {
  *      chunk: Number,
  *      limit: Number,
+ *      download: {
+ *          threshold: Number,
+ *          chunk: Number,
+ *          concurrency: Number,
+ *      },
  *  },
  * }}
  */
@@ -90,6 +109,24 @@ if (config.server.auth === true) {
 if (config.server.auth) {
     config.server.auth = config.server.auth.toString();
 }
+
+const rawNginx = config.server.nginx && typeof config.server.nginx === 'object'
+    ? config.server.nginx
+    : {};
+config.server.nginx = {
+    enabled: rawNginx.enabled === true,
+    internalPath: (() => {
+        const value = typeof rawNginx.internalPath === 'string'
+            ? rawNginx.internalPath.trim().replace(/^\/+|\/+$/g, '')
+            : '';
+        return value ? `/${value}` : '/_cloud_clipboard_files';
+    })(),
+};
+
+config.file = {
+    ...config.file,
+    download: normalizeDownloadConfig(config.file?.download),
+};
 if (config.file && config.file.expire !== undefined) {
     delete config.file.expire;
 }
