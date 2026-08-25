@@ -187,6 +187,15 @@ export default {
             return `${location.protocol}//${location.host}${this.$root.config.prefix || ''}/content/${id}${roomQuery}`;
         },
 
+        triggerNativeDownload(url) {
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = this.meta.name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        },
+
         async downloadFile() {
             if (this.downloading) return;
 
@@ -194,6 +203,8 @@ export default {
             this.downloadedSize = 0;
             let writable = null;
             let fileHandle = null;
+            let downloadUrl = null;
+            let streamingAttempted = false;
             try {
                 const downloadConfig = normalizeDownloadConfig(
                     this.$root.config.file?.download || DEFAULT_DOWNLOAD_CONFIG,
@@ -219,8 +230,10 @@ export default {
                 });
 
                 const url = this.buildContentUrl(this.meta.id);
+                downloadUrl = url;
 
                 if (fileHandle) {
+                    streamingAttempted = true;
                     writable = await fileHandle.createWritable();
                     await downloadRangesToFile({
                         url,
@@ -236,21 +249,14 @@ export default {
                     writable = null;
                     this.$toast('文件下载完成');
                 } else {
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = this.meta.name;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                    this.triggerNativeDownload(url);
                 }
             } catch (error) {
-                if (error?.fallback) {
-                    const link = document.createElement('a');
-                    link.href = this.buildContentUrl(this.meta.id);
-                    link.download = this.meta.name;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                // Some Android browsers expose showSaveFilePicker but do not
+                // fully support writable streams or streamed range responses.
+                // Keep the old browser download as a compatibility fallback.
+                if (downloadUrl && (streamingAttempted || error?.fallback)) {
+                    this.triggerNativeDownload(downloadUrl);
                     return;
                 }
                 if (error.response && error.response.data.msg) {
