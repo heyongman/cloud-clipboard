@@ -205,6 +205,24 @@ export default {
             let fileHandle = null;
             let downloadUrl = null;
             let streamingAttempted = false;
+            // 进度回调可能在一次 read 中触发几十次，直接赋值响应式数据会引发
+            // 频繁重渲染并阻塞 fetch 管线（请求之间出现 ~100ms 间隔）。
+            // 用 rAF 合并为每帧最多更新一次，结束后 flush 保证最终值准确。
+            let pendingDelta = 0;
+            let rafId = null;
+            const flushProgress = () => {
+                rafId = null;
+                if (pendingDelta) {
+                    this.downloadedSize = Math.max(0, this.downloadedSize + pendingDelta);
+                    pendingDelta = 0;
+                }
+            };
+            const scheduleProgress = delta => {
+                pendingDelta += delta;
+                if (rafId === null) {
+                    rafId = requestAnimationFrame(flushProgress);
+                }
+            };
             try {
                 const downloadConfig = normalizeDownloadConfig(
                     this.$root.config.file?.download || DEFAULT_DOWNLOAD_CONFIG,
@@ -219,7 +237,7 @@ export default {
                             suggestedName: this.meta.name,
                         });
                     } catch (error) {
-                        if (error?.name === 'AbortError') return;
+                        if (error?.name === 'AbortError' || /user aborted/i.test(error?.message)) return;
                         // Permission/security errors fall back to the browser's native download.
                         fileHandle = null;
                     }
@@ -242,7 +260,12 @@ export default {
                         concurrency: downloadConfig.concurrency,
                         writable,
                         onProgress: bytes => {
-                            this.downloadedSize = Math.max(0, this.downloadedSize + bytes);
+                            if (bytes > 0) scheduleProgress(bytes);
+                            else if (bytes < 0) {
+                                // 重试时回滚已上报的进度，立即 flush 避免显示倒退滞后
+                                pendingDelta += bytes;
+                                flushProgress();
+                            }
                         },
                     });
                     await writable.close();
@@ -265,6 +288,10 @@ export default {
                     this.$toast('File download failed');
                 }
             } finally {
+                if (rafId !== null) {
+                    cancelAnimationFrame(rafId);
+                    flushProgress();
+                }
                 if (writable) {
                     try {
                         await writable.abort();
