@@ -188,18 +188,36 @@ export default {
           // 创建一个 promise 函数，以便并发池调用
           const task = async () => {
             let lastError;
+            let reported = 0; // 当前分片本次尝试已上报的字节数
             for (let attempt = 0; attempt < 3; attempt++) {
               try {
                 await this.$http.post(`upload/chunk/${uuid}/${i}`, chunk, {
                   headers: {
                     'Content-Type': 'application/octet-stream',
                   },
+                  onUploadProgress: e => {
+                    // 片内实时进度：按增量累加，避免整片传完才跳一次
+                    const delta = e.loaded - reported;
+                    if (delta > 0) {
+                      reported = e.loaded;
+                      this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] + delta);
+                    }
+                  },
                 });
-                const currentTotal = this.uploadedSizes[fileIndex] + chunk.size;
-                this.$set(this.uploadedSizes, fileIndex, currentTotal);
+                // 整片完成，补齐到 chunk.size（保证最终值精确）
+                const tail = chunk.size - reported;
+                if (tail !== 0) {
+                  reported = chunk.size;
+                  this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] + tail);
+                }
                 return;
               } catch (error) {
                 lastError = error;
+                // 重试前回滚本次已上报的进度，下一轮重新从 0 累加
+                if (reported) {
+                  this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] - reported);
+                  reported = 0;
+                }
                 if (attempt === 2) break;
                 await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
               }
