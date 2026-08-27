@@ -136,6 +136,7 @@ import {
     DEFAULT_DOWNLOAD_CONFIG,
     downloadRangesToFile,
     normalizeDownloadConfig,
+    supportsFileSystemAccessDownload,
 } from '@/utils/file-download.mjs';
 
 export default {
@@ -191,6 +192,7 @@ export default {
             const link = document.createElement('a');
             link.href = url;
             link.download = this.meta.name;
+            link.style.display = 'none';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -229,13 +231,16 @@ export default {
                 );
 
                 const useStreamingDownload = this.meta.size >= downloadConfig.threshold
-                    && typeof window.showSaveFilePicker === 'function';
+                    && supportsFileSystemAccessDownload();
 
                 if (useStreamingDownload) {
                     try {
                         fileHandle = await window.showSaveFilePicker({
                             suggestedName: this.meta.name,
                         });
+                        if (typeof fileHandle?.createWritable !== 'function') {
+                            fileHandle = null;
+                        }
                     } catch (error) {
                         if (error?.name === 'AbortError' || /user aborted/i.test(error?.message)) return;
                         // Permission/security errors fall back to the browser's native download.
@@ -275,9 +280,8 @@ export default {
                     this.triggerNativeDownload(url);
                 }
             } catch (error) {
-                // Some Android browsers expose showSaveFilePicker but do not
-                // fully support writable streams or streamed range responses.
-                // Keep the old browser download as a compatibility fallback.
+                // If the streaming implementation still fails at runtime, use
+                // the native browser download on both desktop and mobile.
                 if (downloadUrl && (streamingAttempted || error?.fallback)) {
                     this.triggerNativeDownload(downloadUrl);
                     return;

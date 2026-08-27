@@ -5,7 +5,94 @@ import {
     createDownloadRanges,
     downloadRangesToFile,
     parseContentRange,
+    supportsFileSystemAccessDownload,
 } from '../src/utils/file-download.mjs';
+
+const createFileSystemAccessWindow = overrides => ({
+    isSecureContext: true,
+    showSaveFilePicker() {},
+    FileSystemFileHandle: class {
+        createWritable() {}
+    },
+    ...overrides,
+});
+
+test('supportsFileSystemAccessDownload 允许完整支持 API 的 Chromium 浏览器', () => {
+    const windowObject = createFileSystemAccessWindow();
+
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgentData: {
+                mobile: false,
+                brands: [{brand: 'Chromium', version: '140'}],
+            },
+        },
+    }), true);
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36',
+        },
+    }), true);
+});
+
+test('supportsFileSystemAccessDownload 允许新版移动端 Chrome 和 Edge', () => {
+    const windowObject = createFileSystemAccessWindow();
+
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgentData: {
+                mobile: true,
+                brands: [{brand: 'Chromium', version: '140'}],
+            },
+        },
+    }), true);
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgent: 'Mozilla/5.0 (Android 15; Mobile) Chrome/140.0.0.0 Mobile Safari/537.36',
+        },
+    }), true);
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/140.0.0.0 Mobile Safari/537.36 EdgA/140.0.0.0',
+        },
+    }), true);
+});
+
+test('supportsFileSystemAccessDownload 对非 Chromium 浏览器直接回退', () => {
+    const windowObject = createFileSystemAccessWindow();
+
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgent: 'Mozilla/5.0 Firefox/142.0',
+        },
+    }), false);
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject,
+        navigatorObject: {
+            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) CriOS/140.0.0.0 Mobile/15E148 Safari/604.1',
+        },
+    }), false);
+});
+
+test('supportsFileSystemAccessDownload 拒绝不完整或非安全上下文的实现', () => {
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject: createFileSystemAccessWindow({isSecureContext: false}),
+        navigatorObject: {userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36'},
+    }), false);
+    assert.equal(supportsFileSystemAccessDownload({
+        windowObject: {
+            isSecureContext: true,
+            showSaveFilePicker() {},
+        },
+        navigatorObject: {userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36'},
+    }), false);
+});
 
 test('createDownloadRanges 覆盖所有字节且最后一片可变长', () => {
     assert.deepEqual(createDownloadRanges(25, 10), [

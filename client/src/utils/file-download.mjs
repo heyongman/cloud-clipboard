@@ -4,6 +4,35 @@ export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     concurrency: 4,
 });
 
+const CHROMIUM_BROWSER_PATTERN = /\b(?:Chrome|Chromium|EdgA?|OPR|Vivaldi)\/\d/i;
+
+/**
+ * File System Access is available in supported Chromium browsers on both
+ * desktop and mobile. Keep a Chromium check in addition to API detection to
+ * avoid entering this path in embedded browsers with incomplete shims.
+ */
+export const supportsFileSystemAccessDownload = ({
+    windowObject = typeof window === 'undefined' ? undefined : window,
+    navigatorObject = typeof navigator === 'undefined' ? undefined : navigator,
+} = {}) => {
+    if (!windowObject
+        || windowObject.isSecureContext === false
+        || typeof windowObject.showSaveFilePicker !== 'function'
+        || typeof windowObject.FileSystemFileHandle?.prototype?.createWritable !== 'function') {
+        return false;
+    }
+
+    const userAgentData = navigatorObject?.userAgentData;
+    if (userAgentData) {
+        return (userAgentData.brands || []).some(({brand = ''}) => (
+            /Chromium|Google Chrome|Microsoft Edge|Opera|Brave|Vivaldi/i.test(brand)
+        ));
+    }
+
+    const userAgent = navigatorObject?.userAgent || '';
+    return CHROMIUM_BROWSER_PATTERN.test(userAgent);
+};
+
 export class RangeDownloadError extends Error {
     constructor(message, {fallback = false} = {}) {
         super(message);
