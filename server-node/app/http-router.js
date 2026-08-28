@@ -99,7 +99,7 @@ const formatPreviewResult = result => ({
 });
 
 const sendStoredFile = async (ctx, file, {disposition = 'attachment'} = {}) => {
-    const fileSize = (await fs.promises.stat(file.path)).size;
+    const fileSize = file.size;
     let range;
     try {
         range = parseByteRange(ctx.get('range'), fileSize);
@@ -138,8 +138,8 @@ const sendStoredFile = async (ctx, file, {disposition = 'attachment'} = {}) => {
     }
 
     ctx.body = fs.createReadStream(file.path, range.status === 206
-        ? {start: range.start, end: range.end}
-        : undefined);
+        ? {start: range.start, end: range.end, highWaterMark: 512 * 1024}
+        : {highWaterMark: 512 * 1024});
 };
 
 const publishFileMessage = async (file, room) => {
@@ -212,6 +212,16 @@ const saveHistory = () => fs.promises.writeFile(historyPath, JSON.stringify({
             return data;
         }),
 }));
+
+const moveUploadedFile = async (source, target) => {
+    try {
+        await fs.promises.rename(source, target);
+    } catch (error) {
+        if (error?.code !== 'EXDEV') throw error;
+        await fs.promises.copyFile(source, target);
+        await fs.promises.unlink(source);
+    }
+};
 
 /** @type {import('koa').Middleware} */
 const authMiddleware = async (ctx, next) => {
@@ -713,8 +723,7 @@ router.post(
             file = new UploadedFile(formfile.originalFilename);
             uploadFileMap.set(file.uuid, file);
             file.size = formfile.size;
-            await fs.promises.copyFile(formfile.filepath, file.path);
-            await fs.promises.unlink(formfile.filepath);
+            await moveUploadedFile(formfile.filepath, file.path);
             await file.finish();
             const message = await publishFileMessage(file, ctx.query.room || '');
 
@@ -738,7 +747,7 @@ router.post(
     koaBody({multipart: false, text: false, json: true,}),
     async ctx => {
         try {
-            const { filename, size } = ctx.request.body;
+            const { filename, size, chunkSize: requestedChunkSize } = ctx.request.body;
             if (!filename || typeof size !== 'number') {
                 return writeJSON(ctx, 400, {}, '需要提供 filename 和 size');
             }
@@ -749,14 +758,17 @@ router.post(
                 return writeJSON(ctx, 400, {}, '文件大小超过限制');
             }
 
-            const file = new UploadedFile(filename, size);
+            const chunkSize = Number.isSafeInteger(requestedChunkSize)
+                ? Math.min(config.file.maxChunk, Math.max(config.file.minChunk, requestedChunkSize))
+                : config.file.chunk;
+            const file = new UploadedFile(filename, size, chunkSize);
             await file.open(); // 打开文件并预分配空间
 
             uploadFileMap.set(file.uuid, file);
 
             writeJSON(ctx, 200, {
                 uuid: file.uuid,
-                chunkSize: config.file.chunk
+                chunkSize: file.chunkSize,
             });
         } catch (error) {
             writeJSON(ctx, 500, error.message || '创建上传任务失败');
@@ -781,7 +793,7 @@ router.post('/upload/chunk/:uuid([0-9a-f]{32})/:chunkIndex(\\d+)', authMiddlewar
             ctx.req,
             Number.parseInt(chunkIndex, 10),
             Number.isSafeInteger(declaredLength) ? declaredLength : null,
-            config.file.chunk,
+            file.chunkSize,
         );
         writeJSON(ctx);
     } catch (error) {
@@ -807,7 +819,7 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
                 url: formatFileContentUrl(ctx, message),
             });
         }
-        if (!file.isUploadComplete(config.file.chunk)) {
+        if (!file.isUploadComplete()) {
             preserveIncompleteUpload = true;
             throw new Error('文件分片尚未全部上传');
         }
@@ -826,6 +838,16 @@ router.post('/upload/finish/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
         }
         writeJSON(ctx, 400, {}, error.message || `${error}`);
     }
+});
+
+router.delete('/upload/chunk/:uuid([0-9a-f]{32})', authMiddleware, async ctx => {
+    const file = uploadFileMap.get(ctx.params.uuid);
+    if (!file || file.published) {
+        return writeJSON(ctx, 404, {}, '上传任务不存在');
+    }
+    await file.remove();
+    uploadFileMap.delete(file.uuid);
+    writeJSON(ctx);
 });
 
 router.get(['/file/:uuid([0-9a-f]{32})', '/file/:uuid([0-9a-f]{32})/:filename'], authMiddleware, async ctx => {

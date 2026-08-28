@@ -83,6 +83,14 @@ import {
 import {
     mdiClose,
 } from '@mdi/js';
+import {
+    chooseUploadParameters,
+    createAdaptiveUploadPool,
+    isAbortError,
+    isRetryableUploadError,
+    normalizeUploadConfig,
+    waitForRetry,
+} from '@/utils/file-upload.mjs';
 
 export default {
     name: 'send-file',
@@ -91,7 +99,7 @@ export default {
             progress: false,
             uploadedSizes: [],
             imagePreview: '',
-            uploading: false,
+            uploadController: null,
             mdiClose,
         };
     },
@@ -132,138 +140,182 @@ export default {
         },
       async send() {
         this.progress = true;
+        const uploadConfig = normalizeUploadConfig(this.$root.config.file);
+        const batchParameters = chooseUploadParameters(
+          this.$root.send.files.reduce((largest, file) => Math.max(largest, file.size), 0),
+          uploadConfig,
+        );
+        const controller = new AbortController();
+        const pool = createAdaptiveUploadPool({
+          initialConcurrency: batchParameters.initialConcurrency,
+          maxConcurrency: batchParameters.maxConcurrency,
+          adaptive: uploadConfig.adaptive,
+          signal: controller.signal,
+        });
+        this.uploadController = controller;
+        let rafId = null;
+        const pendingProgress = Array(this.$root.send.files.length).fill(0);
+        const flushProgress = () => {
+          rafId = null;
+          pendingProgress.forEach((delta, index) => {
+            if (!delta) return;
+            pendingProgress[index] = 0;
+            this.$set(this.uploadedSizes, index, Math.max(0, this.uploadedSizes[index] + delta));
+          });
+        };
+        const reportProgress = (fileIndex, delta, immediate = false) => {
+          pendingProgress[fileIndex] += delta;
+          if (immediate) {
+            if (rafId !== null) cancelAnimationFrame(rafId);
+            flushProgress();
+          } else if (rafId === null) {
+            rafId = requestAnimationFrame(flushProgress);
+          }
+        };
         try {
           this.uploadedSizes.splice(0);
           this.uploadedSizes.push(...Array(this.$root.send.files.length).fill(0));
 
-          // 对每个文件执行上传逻辑
-          await Promise.all(this.$root.send.files.map((file, i) => this.uploadFile(file, i)));
+          await Promise.all(this.$root.send.files.map((file, i) => this.uploadFile(
+            file,
+            i,
+            {uploadConfig, pool, signal: controller.signal, reportProgress},
+          )));
 
           this.$toast('所有文件发送成功');
           this.$root.send.files.splice(0);
           this.$root.refresh();
         } catch (error) {
+          controller.abort(error);
           console.error("上传失败:", error);
+          if (isAbortError(error)) return;
           if (error.response && error.response.data.msg) {
             this.$toast(`发送失败：${error.response.data.msg}`);
           } else {
             this.$toast(`发送失败: ${error.message || '未知错误'}`);
           }
         } finally {
+          if (rafId !== null) cancelAnimationFrame(rafId);
+          flushProgress();
+          pool.dispose();
+          if (this.uploadController === controller) this.uploadController = null;
           this.progress = false;
         }
       },
 
-      async uploadFile(file, fileIndex) {
-        const configChunkSize = this.$root.config.file.chunk;
+      async uploadFile(file, fileIndex, context) {
+        const {uploadConfig, pool, signal, reportProgress} = context;
+        const parameters = chooseUploadParameters(file.size, uploadConfig);
 
         // 对于小文件，直接上传
-        if (file.size < configChunkSize) {
+        if (file.size < uploadConfig.minChunk) {
           const fd = new FormData();
           fd.set('file', file);
-          return this.$http.postForm('upload', fd, {
-            params: new URLSearchParams([['room', this.$root.room]]),
-            onUploadProgress: e => this.$set(this.uploadedSizes, fileIndex, e.loaded),
-          });
+          let reported = 0;
+          return pool.run(() => this.$http.postForm('upload', fd, {
+              params: new URLSearchParams([['room', this.$root.room]]),
+              signal,
+              onUploadProgress: e => {
+                const loaded = Math.min(e.loaded, file.size);
+                const delta = loaded - reported;
+                if (delta > 0) {
+                  reported = loaded;
+                  reportProgress(fileIndex, delta);
+                }
+              },
+            }), {adjust: false})
+            .then(result => {
+              const tail = file.size - reported;
+              if (tail) reportProgress(fileIndex, tail);
+              return result;
+            })
+            .catch(error => {
+              if (reported) reportProgress(fileIndex, -reported, true);
+              throw error;
+            });
         }
 
         // --- 大文件分片上传逻辑 ---
 
         // 1. 请求创建上传任务，获取 uuid
-        const response = await this.$http.post('upload/chunk', {
-          filename: file.name,
-          size: file.size
-        });
-        const { uuid, chunkSize = configChunkSize } = response.data.result;
-
-        // 2. 创建所有分片的上传任务
-        const chunksCount = Math.ceil(file.size / chunkSize);
-        const uploadPromises = [];
-
-        for (let i = 0; i < chunksCount; i++) {
-          const start = i * chunkSize;
-          const end = Math.min(start + chunkSize, file.size);
-          const chunk = file.slice(start, end);
-
-          // 创建一个 promise 函数，以便并发池调用
-          const task = async () => {
+        const response = await pool.run(() => this.$http.post('upload/chunk', {
+            filename: file.name,
+            size: file.size,
+            chunkSize: parameters.chunkSize,
+        }, {signal}), {adjust: false});
+        const { uuid, chunkSize = parameters.chunkSize } = response.data.result;
+        let finished = false;
+        try {
+          // 2. 每个文件只创建少量 worker，分片在执行时才 slice，避免大文件
+          // 提前创建数千个任务；所有文件共同使用同一个自适应并发池。
+          const chunksCount = Math.ceil(file.size / chunkSize);
+          let nextChunkIndex = 0;
+          const uploadChunk = async i => {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            const chunk = file.slice(start, end);
             let lastError;
-            let reported = 0; // 当前分片本次尝试已上报的字节数
+            let reported = 0;
             for (let attempt = 0; attempt < 3; attempt++) {
               try {
-                await this.$http.post(`upload/chunk/${uuid}/${i}`, chunk, {
-                  headers: {
-                    'Content-Type': 'application/octet-stream',
-                  },
-                  onUploadProgress: e => {
-                    // 片内实时进度：按增量累加，避免整片传完才跳一次
-                    const delta = e.loaded - reported;
-                    if (delta > 0) {
-                      reported = e.loaded;
-                      this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] + delta);
-                    }
-                  },
-                });
-                // 整片完成，补齐到 chunk.size（保证最终值精确）
+                await pool.run(() => this.$http.post(`upload/chunk/${uuid}/${i}`, chunk, {
+                    headers: {
+                      'Content-Type': 'application/octet-stream',
+                    },
+                    signal,
+                    onUploadProgress: e => {
+                      const delta = e.loaded - reported;
+                      if (delta > 0) {
+                        reported = e.loaded;
+                        reportProgress(fileIndex, delta);
+                      }
+                    },
+                  }));
                 const tail = chunk.size - reported;
-                if (tail !== 0) {
+                if (tail) {
                   reported = chunk.size;
-                  this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] + tail);
+                  reportProgress(fileIndex, tail);
                 }
                 return;
               } catch (error) {
                 lastError = error;
-                // 重试前回滚本次已上报的进度，下一轮重新从 0 累加
                 if (reported) {
-                  this.$set(this.uploadedSizes, fileIndex, this.uploadedSizes[fileIndex] - reported);
+                  reportProgress(fileIndex, -reported, true);
                   reported = 0;
                 }
-                if (attempt === 2) break;
-                await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
+                if (attempt === 2 || !isRetryableUploadError(error)) break;
+                await waitForRetry(250 * 2 ** attempt, signal);
               }
             }
-            throw new Error(`分片 ${i} 上传失败: ${lastError?.message || '网络错误'}`);
+            if (isAbortError(lastError)) throw lastError;
+            const uploadError = new Error(`分片 ${i} 上传失败: ${lastError?.message || '网络错误'}`);
+            uploadError.cause = lastError;
+            throw uploadError;
           };
-
-          uploadPromises.push(task);
-        }
-
-        // 3. 使用并发池执行上传任务
-        await this.runInConcurrentPool(uploadPromises, this.$root.config.file.concurrency); // 设置并发数为 5
-
-        // 4. 通知后端所有分片已上传完毕
-        await this.$http.post(`upload/finish/${uuid}`, null, {
-          params: new URLSearchParams([['room', this.$root.room]]),
-        });
-      },
-
-      /**
-       * 并发池执行器
-       * @param {Array<Function>} tasks - 一个返回 Promise 的函数数组
-       * @param {Number} concurrency - 并发数量
-       */
-      async runInConcurrentPool(tasks, concurrency) {
-        const results = [];
-        let currentIndex = 0;
-
-        // 执行器，从任务数组中取一个任务并执行
-        const run = async () => {
-          while (currentIndex < tasks.length) {
-            const taskIndex = currentIndex++;
-            const task = tasks[taskIndex];
-            try {
-              results[taskIndex] = await task();
-            } catch (error) {
-              // 如果一个分片失败，则抛出错误，中断整个上传
-              throw error;
+          const worker = async () => {
+            while (!signal.aborted) {
+              const chunkIndex = nextChunkIndex++;
+              if (chunkIndex >= chunksCount) return;
+              await uploadChunk(chunkIndex);
             }
-          }
-        };
+          };
+          await Promise.all(Array(Math.min(parameters.maxConcurrency, chunksCount))
+            .fill(null)
+            .map(worker));
 
-        // 创建并发的 workers
-        const workers = Array(concurrency).fill(null).map(() => run());
-        await Promise.all(workers);
-        return results;
+          // 3. 通知后端所有分片已上传完毕
+          await pool.run(() => this.$http.post(`upload/finish/${uuid}`, null, {
+              params: new URLSearchParams([['room', this.$root.room]]),
+              signal,
+            }), {adjust: false});
+          finished = true;
+        } finally {
+          if (!finished) {
+            try {
+              await this.$http.delete(`upload/chunk/${uuid}`);
+            } catch {}
+          }
+        }
       }
     },
     mounted() {
@@ -274,6 +326,11 @@ export default {
             if (!(items.length && items.every(e => e.kind === 'file'))) return;
             this.handleSelectFiles(items.map(e => e.getAsFile()));
         };
+    },
+    beforeDestroy() {
+        this.uploadController?.abort();
+        document.onpaste = null;
+        URL.revokeObjectURL(this.imagePreview);
     },
 }
 </script>

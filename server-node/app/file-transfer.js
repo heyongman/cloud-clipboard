@@ -92,7 +92,20 @@ export const buildAccelRedirect = (internalPath, uuid) => (
 export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     threshold: 32 * 1024 * 1024,
     chunk: 8 * 1024 * 1024,
-    concurrency: 4,
+    minChunk: 4 * 1024 * 1024,
+    maxChunk: 16 * 1024 * 1024,
+    concurrency: 2,
+    maxConcurrency: 6,
+    adaptive: true,
+});
+
+export const DEFAULT_UPLOAD_CONFIG = Object.freeze({
+    chunk: 8 * 1024 * 1024,
+    minChunk: 2 * 1024 * 1024,
+    maxChunk: 16 * 1024 * 1024,
+    concurrency: 2,
+    maxConcurrency: 6,
+    adaptive: true,
 });
 
 const positiveInteger = (value, fallback) => (
@@ -101,9 +114,40 @@ const positiveInteger = (value, fallback) => (
 
 export const normalizeDownloadConfig = value => {
     const raw = value && typeof value === 'object' ? value : {};
+    const minChunk = positiveInteger(raw.minChunk, DEFAULT_DOWNLOAD_CONFIG.minChunk);
+    const maxChunk = Math.max(minChunk, positiveInteger(raw.maxChunk, DEFAULT_DOWNLOAD_CONFIG.maxChunk));
+    const concurrency = Math.min(8, positiveInteger(raw.concurrency, DEFAULT_DOWNLOAD_CONFIG.concurrency));
     return {
         threshold: positiveInteger(raw.threshold, DEFAULT_DOWNLOAD_CONFIG.threshold),
-        chunk: positiveInteger(raw.chunk, DEFAULT_DOWNLOAD_CONFIG.chunk),
-        concurrency: Math.min(16, positiveInteger(raw.concurrency, DEFAULT_DOWNLOAD_CONFIG.concurrency)),
+        chunk: Math.min(maxChunk, Math.max(minChunk, positiveInteger(raw.chunk, DEFAULT_DOWNLOAD_CONFIG.chunk))),
+        minChunk,
+        maxChunk,
+        concurrency,
+        maxConcurrency: Math.min(8, Math.max(
+            concurrency,
+            positiveInteger(raw.maxConcurrency, DEFAULT_DOWNLOAD_CONFIG.maxConcurrency),
+        )),
+        adaptive: raw.adaptive !== false,
+    };
+};
+
+export const normalizeUploadConfig = value => {
+    const raw = value && typeof value === 'object' ? value : {};
+    const minChunk = positiveInteger(raw.minChunk, DEFAULT_UPLOAD_CONFIG.minChunk);
+    const maxChunk = Math.max(minChunk, positiveInteger(raw.maxChunk, DEFAULT_UPLOAD_CONFIG.maxChunk));
+    const concurrency = Math.min(8, positiveInteger(raw.concurrency, DEFAULT_UPLOAD_CONFIG.concurrency));
+    return {
+        chunk: Math.min(maxChunk, Math.max(
+            minChunk,
+            positiveInteger(raw.chunk, DEFAULT_UPLOAD_CONFIG.chunk),
+        )),
+        minChunk,
+        maxChunk,
+        concurrency,
+        maxConcurrency: Math.min(8, Math.max(
+            concurrency,
+            positiveInteger(raw.maxConcurrency, DEFAULT_UPLOAD_CONFIG.maxConcurrency),
+        )),
+        adaptive: raw.adaptive !== false,
     };
 };

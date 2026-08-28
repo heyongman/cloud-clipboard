@@ -56,7 +56,13 @@ app.use(async (ctx, next) => {
         ?? ctx.request.header['x-forwarded-for']?.split(',').pop()?.trim()
         ?? ctx.req.socket.remoteAddress;
 
-    console.log(new Date().toISOString(), '-', remoteAddress, ctx.request.method, ctx.request.path, statusString, `${(performance.now() - startTime).toFixed(2)}ms`);
+    const isSuccessfulChunkTransfer = statusCode < 400 && (
+        (ctx.method === 'POST' && /\/upload\/chunk\/[0-9a-f]{32}\/\d+$/.test(ctx.request.path))
+        || (ctx.method === 'GET' && !!ctx.get('range') && /\/(?:file|content)\//.test(ctx.request.path))
+    );
+    if (!isSuccessfulChunkTransfer) {
+        console.log(new Date().toISOString(), '-', remoteAddress, ctx.request.method, ctx.request.path, statusString, `${(performance.now() - startTime).toFixed(2)}ms`);
+    }
 })
 app.use(async (ctx, next) => {
     if (prefix && ctx.method === 'GET' && ctx.path === '/') {

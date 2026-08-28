@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
     buildAccelRedirect,
     DEFAULT_DOWNLOAD_CONFIG,
+    DEFAULT_UPLOAD_CONFIG,
     normalizeDownloadConfig,
+    normalizeUploadConfig,
     parseByteRange,
     RangeNotSatisfiableError,
 } from '../app/file-transfer.js';
@@ -57,8 +59,18 @@ test('normalizeDownloadConfig 为缺失或非法配置提供安全默认值', ()
         chunk: 4 * 1024 * 1024,
         concurrency: 100,
     }), {
-        threshold: DEFAULT_DOWNLOAD_CONFIG.threshold,
+        ...DEFAULT_DOWNLOAD_CONFIG,
         chunk: 4 * 1024 * 1024,
-        concurrency: 16,
+        concurrency: 8,
+        maxConcurrency: 8,
+    });
+});
+
+test('normalizeUploadConfig 补齐上传参数并限制自适应并发', () => {
+    assert.deepEqual(normalizeUploadConfig({chunk: 4 * 1024 * 1024, concurrency: 100}), {
+        ...DEFAULT_UPLOAD_CONFIG,
+        chunk: 4 * 1024 * 1024,
+        concurrency: 8,
+        maxConcurrency: 8,
     });
 });

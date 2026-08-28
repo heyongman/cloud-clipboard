@@ -134,8 +134,8 @@ import {
 import { copyToClipboard } from '@/util.js';
 import {
     DEFAULT_DOWNLOAD_CONFIG,
+    chooseDownloadParameters,
     downloadRangesToFile,
-    normalizeDownloadConfig,
     supportsFileSystemAccessDownload,
 } from '@/utils/file-download.mjs';
 
@@ -226,7 +226,7 @@ export default {
                 }
             };
             try {
-                const downloadConfig = normalizeDownloadConfig(
+                const downloadConfig = chooseDownloadParameters(this.meta.size,
                     this.$root.config.file?.download || DEFAULT_DOWNLOAD_CONFIG,
                 );
 
@@ -263,6 +263,8 @@ export default {
                         fileSize: this.meta.size,
                         chunkSize: downloadConfig.chunk,
                         concurrency: downloadConfig.concurrency,
+                        maxConcurrency: downloadConfig.maxConcurrency,
+                        adaptive: downloadConfig.adaptive,
                         writable,
                         onProgress: bytes => {
                             if (bytes > 0) scheduleProgress(bytes);

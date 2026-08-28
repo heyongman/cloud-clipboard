@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    chooseDownloadParameters,
     createDownloadRanges,
     downloadRangesToFile,
     parseContentRange,
     supportsFileSystemAccessDownload,
 } from '../src/utils/file-download.mjs';
+
+const MIB = 1024 * 1024;
 
 const createFileSystemAccessWindow = overrides => ({
     isSecureContext: true,
@@ -92,6 +95,23 @@ test('supportsFileSystemAccessDownload 拒绝不完整或非安全上下文的�
         },
         navigatorObject: {userAgent: 'Mozilla/5.0 Chrome/140.0.0.0 Safari/537.36'},
     }), false);
+});
+
+test('chooseDownloadParameters 根据网络信息选择任务级参数', () => {
+    const config = {chunk: 8 * MIB, concurrency: 2, maxConcurrency: 6};
+    assert.deepEqual(chooseDownloadParameters(100 * MIB, config, {effectiveType: '3g'}), {
+        threshold: 32 * MIB,
+        chunk: 4 * MIB,
+        minChunk: 4 * MIB,
+        maxChunk: 16 * MIB,
+        concurrency: 2,
+        maxConcurrency: 6,
+        adaptive: true,
+    });
+    assert.equal(
+        chooseDownloadParameters(100 * MIB, config, {effectiveType: '4g', downlink: 50}).chunk,
+        16 * MIB,
+    );
 });
 
 test('createDownloadRanges 覆盖所有字节且最后一片可变长', () => {
@@ -188,4 +208,21 @@ test('downloadRangesToFile 对短暂错误重试并只累计最终进度', async
     assert.equal(attempts, 2);
     assert.equal(progress, 4);
     assert.deepEqual([...target], [1, 2, 3, 4]);
+});
+
+test('downloadRangesToFile 对客户端错误不进行无意义重试', async () => {
+    let attempts = 0;
+    await assert.rejects(downloadRangesToFile({
+        url: '/file',
+        fileSize: 4,
+        chunkSize: 4,
+        concurrency: 1,
+        writable: {async write() {}, async truncate() {}},
+        fetchImpl: async () => {
+            attempts++;
+            return new Response(null, {status: 403});
+        },
+        retries: 2,
+    }), /分片下载请求失败/);
+    assert.equal(attempts, 1);
 });

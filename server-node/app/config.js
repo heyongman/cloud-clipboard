@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
     DEFAULT_DOWNLOAD_CONFIG,
     normalizeDownloadConfig,
+    normalizeUploadConfig,
 } from './file-transfer.js';
 
 const defaultConfigPath = path.join(process.cwd(), 'config.json');
@@ -44,7 +45,12 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             limit: 4096,
         },
         file: {
-            chunk: 2097152,
+            chunk: 8388608,
+            minChunk: 2097152,
+            maxChunk: 16777216,
+            concurrency: 2,
+            maxConcurrency: 6,
+            adaptive: true,
             limit: 268435456,
             download: DEFAULT_DOWNLOAD_CONFIG,
         },
@@ -84,11 +90,20 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *  },
  *  file: {
  *      chunk: Number,
+ *      minChunk: Number,
+ *      maxChunk: Number,
+ *      concurrency: Number,
+ *      maxConcurrency: Number,
+ *      adaptive: Boolean,
  *      limit: Number,
  *      download: {
  *          threshold: Number,
  *          chunk: Number,
+ *          minChunk: Number,
+ *          maxChunk: Number,
  *          concurrency: Number,
+ *          maxConcurrency: Number,
+ *          adaptive: Boolean,
  *      },
  *  },
  * }}
@@ -125,6 +140,7 @@ config.server.nginx = {
 
 config.file = {
     ...config.file,
+    ...normalizeUploadConfig(config.file),
     download: normalizeDownloadConfig(config.file?.download),
 };
 if (config.file && config.file.expire !== undefined) {

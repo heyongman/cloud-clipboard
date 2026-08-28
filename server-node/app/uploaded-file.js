@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {Transform, Writable} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
 
 import config from './config.js';
 
@@ -15,7 +17,7 @@ class UploadedFile {
      * @param {String} name
      * @param {String} size
      */
-    constructor(name, size) {
+    constructor(name, size, chunkSize = config.file.chunk) {
         this.name = name;
         this.size = Number.isSafeInteger(size) ? size : 0;
         this.uuid = crypto.randomBytes(16).toString('hex');
@@ -24,6 +26,7 @@ class UploadedFile {
         this.uploadTime = Date.now() / 1000;
         this.writePromise = Promise.resolve();
         this.uploadedSize = 0;
+        this.chunkSize = chunkSize;
         this.fileHandle = null; // 用于存储文件句柄
         this.uploadedChunks = new Set();
         this.chunkPromises = new Map();
@@ -33,18 +36,18 @@ class UploadedFile {
     }
 
     /**
-     * 打开文件句柄并预分配空间
+     * 打开文件句柄并提前设置逻辑文件大小
      */
     async open() {
         // 'w' 模式会创建或清空文件
         this.fileHandle = await fs.promises.open(this.path, 'w+');
-        // 预分配文件大小，可以提高性能并减少磁盘碎片
+        // truncate 会提前设置逻辑大小，但不保证底层文件系统物理预分配。
         if (this.size > 0) {
             await this.fileHandle.truncate(this.size);
         }
     }
 
-    getChunkInfo(chunkIndex, chunkSize = config.file.chunk) {
+    getChunkInfo(chunkIndex, chunkSize = this.chunkSize) {
         if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || !Number.isSafeInteger(chunkSize) || chunkSize <= 0) {
             throw new Error('分片索引无效');
         }
@@ -65,7 +68,7 @@ class UploadedFile {
         };
     }
 
-    isUploadComplete(chunkSize = config.file.chunk) {
+    isUploadComplete(chunkSize = this.chunkSize) {
         if (this.size <= 0) return false;
         const {chunksCount} = this.getChunkInfo(0, chunkSize);
         return this.uploadedChunks.size === chunksCount && this.uploadedSize === this.size;
@@ -75,7 +78,7 @@ class UploadedFile {
      * Stream one request body into its fixed file offset. Repeated chunk
      * requests are idempotent so clients can safely retry after a timeout.
      */
-    async writeStream(stream, chunkIndex, contentLength = null, chunkSize = config.file.chunk) {
+    async writeStream(stream, chunkIndex, contentLength = null, chunkSize = this.chunkSize) {
         const info = this.getChunkInfo(chunkIndex, chunkSize);
         if (contentLength !== null && contentLength !== undefined && contentLength !== info.size) {
             throw new Error('分片长度与预期不符');
@@ -98,14 +101,54 @@ class UploadedFile {
         const writePromise = (async () => {
             let receivedBytes = 0;
             try {
-                for await (const data of stream) {
-                    if (!Buffer.isBuffer(data)) continue;
-                    if (receivedBytes + data.length > info.size) {
-                        throw new Error('分片大小超出预期');
-                    }
-                    await this.fileHandle.write(data, 0, data.length, info.offset + receivedBytes);
-                    receivedBytes += data.length;
-                }
+                let pending = [];
+                let pendingBytes = 0;
+                const validateAndBatch = new Transform({
+                    transform(data, _encoding, callback) {
+                        receivedBytes += data.length;
+                        if (receivedBytes > info.size) {
+                            callback(new Error('分片大小超出预期'));
+                            return;
+                        }
+                        pending.push(data);
+                        pendingBytes += data.length;
+                        if (pendingBytes < 512 * 1024) {
+                            callback();
+                            return;
+                        }
+                        const output = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes);
+                        pending = [];
+                        pendingBytes = 0;
+                        callback(null, output);
+                    },
+                    flush(callback) {
+                        if (pendingBytes) this.push(pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingBytes));
+                        callback();
+                    },
+                });
+                const fileHandle = this.fileHandle;
+                let writePosition = info.offset;
+                const output = new Writable({
+                    highWaterMark: 512 * 1024,
+                    write(data, _encoding, callback) {
+                        const writeAll = async () => {
+                            let offset = 0;
+                            while (offset < data.length) {
+                                const {bytesWritten} = await fileHandle.write(
+                                    data,
+                                    offset,
+                                    data.length - offset,
+                                    writePosition + offset,
+                                );
+                                if (!bytesWritten) throw new Error('文件写入未取得进展');
+                                offset += bytesWritten;
+                            }
+                            writePosition += data.length;
+                        };
+                        writeAll().then(() => callback(), callback);
+                    },
+                });
+                await pipeline(stream, validateAndBatch, output);
                 if (receivedBytes !== info.size) {
                     throw new Error('分片大小与预期不符');
                 }

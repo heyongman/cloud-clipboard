@@ -1,7 +1,11 @@
 export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     threshold: 32 * 1024 * 1024,
     chunk: 8 * 1024 * 1024,
-    concurrency: 4,
+    minChunk: 4 * 1024 * 1024,
+    maxChunk: 16 * 1024 * 1024,
+    concurrency: 2,
+    maxConcurrency: 6,
+    adaptive: true,
 });
 
 const CHROMIUM_BROWSER_PATTERN = /\b(?:Chrome|Chromium|EdgA?|OPR|Vivaldi)\/\d/i;
@@ -34,10 +38,11 @@ export const supportsFileSystemAccessDownload = ({
 };
 
 export class RangeDownloadError extends Error {
-    constructor(message, {fallback = false} = {}) {
+    constructor(message, {fallback = false, retryable = true} = {}) {
         super(message);
         this.name = 'RangeDownloadError';
         this.fallback = fallback;
+        this.retryable = retryable;
     }
 }
 
@@ -46,10 +51,54 @@ export const normalizeDownloadConfig = value => {
     const positive = (candidate, fallback) => Number.isSafeInteger(candidate) && candidate > 0
         ? candidate
         : fallback;
+    const minChunk = positive(raw.minChunk, DEFAULT_DOWNLOAD_CONFIG.minChunk);
+    const maxChunk = Math.max(minChunk, positive(raw.maxChunk, DEFAULT_DOWNLOAD_CONFIG.maxChunk));
+    const concurrency = Math.min(8, positive(raw.concurrency, DEFAULT_DOWNLOAD_CONFIG.concurrency));
     return {
         threshold: positive(raw.threshold, DEFAULT_DOWNLOAD_CONFIG.threshold),
-        chunk: positive(raw.chunk, DEFAULT_DOWNLOAD_CONFIG.chunk),
-        concurrency: Math.min(16, positive(raw.concurrency, DEFAULT_DOWNLOAD_CONFIG.concurrency)),
+        chunk: Math.min(maxChunk, Math.max(minChunk, positive(raw.chunk, DEFAULT_DOWNLOAD_CONFIG.chunk))),
+        minChunk,
+        maxChunk,
+        concurrency,
+        maxConcurrency: Math.min(8, Math.max(
+            concurrency,
+            positive(raw.maxConcurrency, DEFAULT_DOWNLOAD_CONFIG.maxConcurrency),
+        )),
+        adaptive: raw.adaptive !== false,
+    };
+};
+
+export const chooseDownloadParameters = (
+    fileSize,
+    value,
+    connection = typeof navigator === 'undefined' ? undefined : navigator.connection,
+) => {
+    const config = normalizeDownloadConfig(value);
+    if (!config.adaptive) {
+        return {
+            ...config,
+            chunk: Math.min(fileSize, config.chunk),
+            maxConcurrency: config.concurrency,
+        };
+    }
+    const effectiveType = connection?.effectiveType || '';
+    const downlink = Number(connection?.downlink);
+    let chunk = 8 * 1024 * 1024;
+    let concurrency = config.concurrency;
+    if (connection?.saveData || /(^|-)2g$/.test(effectiveType)) {
+        chunk = 4 * 1024 * 1024;
+        concurrency = 1;
+    } else if (effectiveType === '3g' || (Number.isFinite(downlink) && downlink <= 3)) {
+        chunk = 4 * 1024 * 1024;
+        concurrency = Math.min(concurrency, 2);
+    } else if (Number.isFinite(downlink) && downlink >= 30) {
+        chunk = 16 * 1024 * 1024;
+        concurrency = Math.max(concurrency, 3);
+    }
+    return {
+        ...config,
+        chunk: Math.min(fileSize, config.maxChunk, Math.max(config.minChunk, chunk)),
+        concurrency: Math.min(config.maxConcurrency, concurrency),
     };
 };
 
@@ -82,13 +131,19 @@ export const parseContentRange = value => {
 };
 
 const getHeader = (response, name) => response.headers?.get?.(name) || '';
+const WRITE_BATCH_SIZE = 512 * 1024;
 
 const validateRangeResponse = (response, range, fileSize) => {
     if (response?.status === 200) {
         throw new RangeDownloadError('服务端未返回有效的分片响应', {fallback: true});
     }
     if (!response || response.status !== 206) {
-        throw new RangeDownloadError('分片下载请求失败');
+        const retryable = !response
+            || response.status === 408
+            || response.status === 425
+            || response.status === 429
+            || response.status >= 500;
+        throw new RangeDownloadError('分片下载请求失败', {retryable});
     }
     const contentRange = parseContentRange(getHeader(response, 'Content-Range'));
     if (!contentRange || contentRange.start !== range.start || contentRange.end !== range.end || contentRange.total !== fileSize) {
@@ -114,18 +169,41 @@ const readResponse = async (response, range, write, onBytes) => {
     const reader = response.body.getReader();
     let position = range.start;
     let received = 0;
+    let pending = [];
+    let pendingBytes = 0;
+    const flush = async () => {
+        if (!pendingBytes) return;
+        let data;
+        if (pending.length === 1) {
+            [data] = pending;
+        } else {
+            data = new Uint8Array(pendingBytes);
+            let offset = 0;
+            pending.forEach(value => {
+                data.set(value, offset);
+                offset += value.byteLength;
+            });
+        }
+        const writePosition = position;
+        position += pendingBytes;
+        received += pendingBytes;
+        pending = [];
+        pendingBytes = 0;
+        await write(data, writePosition);
+        onBytes(data.byteLength);
+    };
     try {
         while (true) {
             const {done, value} = await reader.read();
             if (done) break;
-            if (!value || !value.byteLength || received + value.byteLength > range.length) {
+            if (!value || !value.byteLength || received + pendingBytes + value.byteLength > range.length) {
                 throw new RangeDownloadError('下载分片长度超出预期');
             }
-            await write(value, position);
-            position += value.byteLength;
-            received += value.byteLength;
-            onBytes(value.byteLength);
+            pending.push(value);
+            pendingBytes += value.byteLength;
+            if (pendingBytes >= WRITE_BATCH_SIZE) await flush();
         }
+        await flush();
     } finally {
         reader.releaseLock?.();
     }
@@ -147,7 +225,21 @@ const createWriteQueue = writable => {
     };
 };
 
-const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const sleep = (milliseconds, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+        reject(signal.reason || new DOMException('下载已取消', 'AbortError'));
+        return;
+    }
+    const timeoutId = setTimeout(() => {
+        signal?.removeEventListener('abort', abort);
+        resolve();
+    }, milliseconds);
+    const abort = () => {
+        clearTimeout(timeoutId);
+        reject(signal.reason || new DOMException('下载已取消', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, {once: true});
+});
 
 const downloadOneRange = async ({
     url,
@@ -159,6 +251,7 @@ const downloadOneRange = async ({
     onProgress,
     signal,
     retries,
+    onRetry,
 }) => {
     let previousBytes = 0;
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -189,10 +282,12 @@ const downloadOneRange = async ({
         } catch (error) {
             if (error?.name === 'AbortError' || signal?.aborted) throw error;
             if (error?.fallback) throw error;
+            if (error?.retryable === false) throw error;
             if (attempt === retries) {
                 throw error;
             }
-            await sleep(250 * 2 ** attempt);
+            onRetry(error, attempt);
+            await sleep(250 * 2 ** attempt, signal);
         }
     }
 };
@@ -211,6 +306,8 @@ export const downloadRangesToFile = async ({
     onProgress = () => {},
     retries = 2,
     signal,
+    adaptive = false,
+    maxConcurrency = concurrency,
 }) => {
     if (typeof fetchImpl !== 'function') {
         throw new RangeDownloadError('当前浏览器不支持 Fetch');
@@ -232,26 +329,55 @@ export const downloadRangesToFile = async ({
         progress[rangeIndex] += bytes;
         onProgress(bytes, progress[rangeIndex], ranges[rangeIndex]);
     };
-    const worker = async () => {
-        while (true) {
-            const rangeIndex = nextIndex++;
-            if (rangeIndex >= ranges.length) return;
-            await downloadOneRange({
-                url,
-                range: ranges[rangeIndex],
-                rangeIndex,
-                fileSize,
-                fetchImpl,
-                write,
-                onProgress: updateProgress,
-                signal: combinedSignal,
-                retries,
-            });
-        }
-    };
-
     try {
-        await Promise.all(Array(Math.min(concurrency, ranges.length)).fill(null).map(worker));
+        let active = 0;
+        let limit = Math.min(maxConcurrency, concurrency);
+        let successes = 0;
+        await new Promise((resolve, reject) => {
+            let settled = false;
+            const launch = () => {
+                if (settled) return;
+                if (nextIndex >= ranges.length && active === 0) {
+                    settled = true;
+                    resolve();
+                    return;
+                }
+                while (active < limit && nextIndex < ranges.length) {
+                    const rangeIndex = nextIndex++;
+                    active++;
+                    downloadOneRange({
+                        url,
+                        range: ranges[rangeIndex],
+                        rangeIndex,
+                        fileSize,
+                        fetchImpl,
+                        write,
+                        onProgress: updateProgress,
+                        signal: combinedSignal,
+                        retries,
+                        onRetry: () => {
+                            if (!adaptive) return;
+                            limit = Math.max(1, Math.ceil(limit / 2));
+                            successes = 0;
+                        },
+                    }).then(() => {
+                        active--;
+                        successes++;
+                        if (adaptive && limit < maxConcurrency && successes >= limit * 2) {
+                            limit++;
+                            successes = 0;
+                        }
+                        launch();
+                    }, error => {
+                        active--;
+                        if (settled) return;
+                        settled = true;
+                        reject(error);
+                    });
+                }
+            };
+            launch();
+        });
         await writable.truncate(fileSize);
     } catch (error) {
         controller.abort();

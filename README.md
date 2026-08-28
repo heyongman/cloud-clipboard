@@ -231,12 +231,21 @@ php build-phar.php
     },
     "file": {
         "expire": 3600, // 上传文件的有效期，超过有效期后自动删除，单位为秒
-        "chunk": 1048576, // 上传文件的分片大小，不能超过 5 MB，单位为 byte
+        "chunk": 8388608, // 未启用自适应或无法判断网络时的上传分片大小
+        "minChunk": 2097152, // 自适应上传分片下限
+        "maxChunk": 16777216, // 自适应上传分片上限
+        "concurrency": 2, // 上传初始并发数，所有文件共享该并发池
+        "maxConcurrency": 6, // 自适应上传最大并发数
+        "adaptive": true, // 根据网络信息及传输成功/失败动态调整参数
         "limit": 104857600, // 上传文件的大小限制，单位为 byte
         "download": {
             "threshold": 33554432,
             "chunk": 8388608,
-            "concurrency": 4
+            "minChunk": 4194304,
+            "maxChunk": 16777216,
+            "concurrency": 2,
+            "maxConcurrency": 6,
+            "adaptive": true
         }
     }
 }
@@ -252,9 +261,21 @@ php build-phar.php
 > 如果启用“密码认证”，只有输入正确的密码才能连接到服务端并查看剪贴板内容。
 > 可以将 `server.auth` 字段设为 `true`（随机生成六位密码）或字符串（自定义密码）来启用这个功能，启动服务端后终端会以 `Authorization code: ******` 的格式输出当前使用的密码。
 
-#### 大文件下载与 Nginx 部署
+#### 大文件传输与自适应参数
 
-大文件下载在支持 File System Access API 的浏览器中会弹出保存位置，并使用多个 HTTP Range 请求并行下载，数据直接写入目标文件，不在浏览器内存中拼接完整 Blob。其他浏览器会降级为普通流式下载。
+上传和大文件下载默认使用自适应参数。浏览器支持 Network Information API 时，会在任务开始时根据网络类型选择分片大小；上传分片在同一个文件内保持固定，确保 `chunkIndex` 对应的写入偏移不会变化。传输过程中采用加性增大、乘性减小策略：连续成功后逐步提高全局并发，遇到可重试的网络错误、限流或服务端错误时将并发减半。多文件上传共享同一个并发池，不会按文件数成倍增加连接。
+
+默认范围适合网络是主要瓶颈、上传约 1–10 MB/s 的场景：
+
+- 上传分片为 2–16 MiB，下载分片为 4–16 MiB。
+- 初始并发通常为 1–3，连续成功后最高增加到 6。
+- 设置 `adaptive: false` 后，固定使用对应的 `chunk` 和 `concurrency`，并忽略 `maxConcurrency`。
+
+大文件下载在支持 File System Access API 的 Chromium 浏览器中会弹出保存位置，并使用多个 HTTP Range 请求并行下载，数据以 512 KiB 左右的批次直接写入目标文件，不在浏览器内存中拼接完整 Blob。其他浏览器会降级为浏览器原生流式下载。
+
+Node 服务端默认直接以 512 KiB 读取缓冲输出文件，不依赖 Nginx。上传请求体同样按约 512 KiB 合并后，以固定偏移并行写入目标文件，从而减少 JavaScript 调度和文件系统调用次数。
+
+#### 可选的 Nginx 部署
 
 Node 服务端默认直接以文件流响应。若使用 Nginx，可开启 server.nginx.enabled，由 Node 完成认证和分享链接校验后返回 X-Accel-Redirect，Nginx 再使用 sendfile 直出文件。示例配置见 deploy/nginx/cloud-clipboard.conf。
 
