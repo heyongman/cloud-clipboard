@@ -4,7 +4,7 @@ const MESSAGE_PAGE_SIZE = 10;
 const createDefaultConfig = () => ({
     version: 'local',
     text: { limit: 100000 },
-    file: { limit: 10737418240, chunk: 2097152 },
+    file: { limit: 268435456, chunk: 2097152 },
 });
 
 export default {
@@ -17,6 +17,7 @@ export default {
             roomDialog: false,
             loading: false,
             hasMore: true,
+            nextCursor: null,
             connected: false,
             connecting: false,
         };
@@ -42,7 +43,13 @@ export default {
         async fetchConfig() {
             const { data: { result } } = await this.$http.get('config');
             if (result) {
-                this.$root.config = result;
+                const defaults = createDefaultConfig();
+                this.$root.config = {
+                    ...defaults,
+                    ...result,
+                    text: {...defaults.text, ...result.text},
+                    file: {...defaults.file, ...result.file},
+                };
             }
         },
 
@@ -61,17 +68,18 @@ export default {
                     params: {
                         room: this.room,
                         limit: MESSAGE_PAGE_SIZE,
-                        ...(beforeId ? { beforeId } : {}),
+                        ...(beforeId !== null ? { beforeId } : {}),
                     },
                 });
-                const { items = [], hasMore = false } = result || {};
+                const { items = [], hasMore = false, nextCursor = null } = result || {};
 
-                if (beforeId) {
+                if (beforeId !== null) {
                     this.$root.received.push(...items);
                 } else {
                     this.$root.received = items;
                 }
                 this.hasMore = hasMore;
+                this.nextCursor = nextCursor;
             } catch (error) {
                 console.error('Failed to fetch messages:', error);
                 throw error;
@@ -119,6 +127,7 @@ export default {
             });
 
             this.hasMore = true;
+            this.nextCursor = null;
             try {
                 await this.fetchConfig();
                 await this.fetchMessages();
@@ -148,8 +157,8 @@ export default {
             if (!this.isClipboardRoute()) return;
 
             this.hasMore = true;
+            this.nextCursor = null;
             try {
-                await this.fetchConfig();
                 await this.fetchMessages();
             } catch (error) {
                 this.$toast.error('刷新失败');
@@ -160,9 +169,8 @@ export default {
             if (!this.isClipboardRoute()) return;
             if (!this.hasMore || this.loading || !this.$root.received.length) return; 
 
-            const lastId = this.$root.received[this.$root.received.length - 1]?.id;
-            if (lastId) {
-                await this.fetchMessages(lastId);
+            if (this.nextCursor !== null) {
+                await this.fetchMessages(this.nextCursor);
             }
         },
     },

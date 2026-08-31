@@ -73,4 +73,5 @@ test('normalizeUploadConfig 补齐上传参数并限制自适应并发', () => {
         concurrency: 8,
         maxConcurrency: 8,
     });
+    assert.equal(normalizeUploadConfig({limit: -1}).limit, DEFAULT_UPLOAD_CONFIG.limit);
 });

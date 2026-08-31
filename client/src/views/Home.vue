@@ -12,7 +12,7 @@
                 </v-fade-transition>
 
                 <!-- 触底加载更多 -->
-                <div v-if="$root.hasMore" v-intersect="onIntersect" class="text-center py-4">
+                <div ref="loadMoreTrigger" v-if="$root.hasMore" v-intersect="onIntersect" class="text-center py-4">
                     <v-progress-circular v-if="$root.loading" indeterminate color="primary" size="24"></v-progress-circular>
                     <span v-else class="caption text--secondary">下滑加载更多</span>
                 </div>
@@ -99,6 +99,7 @@ export default {
         return {
             fab: false,
             dialog: false,
+            loadMoreTriggerVisible: false,
             mode: null,
             mdiPlus,
             mdiFileDocumentOutline,
@@ -114,8 +115,22 @@ export default {
             return setTimeout(f, t);
         },
         onIntersect(entries) {
-            // 当触底元素进入视口时加载更多
-            if (entries[0].isIntersecting && !this.$root.loading && this.$root.hasMore) {
+            this.loadMoreTriggerVisible = entries.some(entry => entry.isIntersecting);
+        },
+        handleScroll() {
+            if (
+                !this.loadMoreTriggerVisible
+                || !this.$root.received.length
+                || this.$root.loading
+                || !this.$root.hasMore
+            ) {
+                return;
+            }
+
+            const scrollTop = window.scrollY
+                || document.documentElement.scrollTop
+                || document.body.scrollTop;
+            if (scrollTop > 0) {
                 this.$root.loadMore();
             }
         },
@@ -136,6 +151,12 @@ export default {
     beforeRouteUpdate(to, from, next) {
         this.$root.room = to.query.room || '';
         next();
+    },
+    mounted() {
+        window.addEventListener('scroll', this.handleScroll, {passive: true});
+    },
+    beforeDestroy() {
+        window.removeEventListener('scroll', this.handleScroll);
     },
 }
 </script>

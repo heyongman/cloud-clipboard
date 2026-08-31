@@ -100,6 +100,7 @@ export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
 });
 
 export const DEFAULT_UPLOAD_CONFIG = Object.freeze({
+    limit: 256 * 1024 * 1024,
     chunk: 8 * 1024 * 1024,
     minChunk: 2 * 1024 * 1024,
     maxChunk: 16 * 1024 * 1024,
@@ -137,6 +138,7 @@ export const normalizeUploadConfig = value => {
     const maxChunk = Math.max(minChunk, positiveInteger(raw.maxChunk, DEFAULT_UPLOAD_CONFIG.maxChunk));
     const concurrency = Math.min(8, positiveInteger(raw.concurrency, DEFAULT_UPLOAD_CONFIG.concurrency));
     return {
+        limit: positiveInteger(raw.limit, DEFAULT_UPLOAD_CONFIG.limit),
         chunk: Math.min(maxChunk, Math.max(
             minChunk,
             positiveInteger(raw.chunk, DEFAULT_UPLOAD_CONFIG.chunk),

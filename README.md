@@ -209,7 +209,7 @@ php build-phar.php
         "prefix": "", // 部署时的URL前缀，例如想要在 http://localhost/prefix/ 访问，则将这一项设为 /prefix
         "key": "localhost-key.pem", // HTTPS 私钥路径
         "cert": "localhost.pem", // HTTPS 证书路径
-        "history": 10, // 消息历史记录的数量
+        "history": 100, // 消息历史记录的数量；剪贴板每页加载 10 条，建议设置为大于 10
         "auth": false, // 是否在连接时要求使用密码认证，falsy 值表示不使用
         "historyFile": null, // 自定义历史记录存储路径，默认为当前目录的 history.json
         "storageDir": null, // 自定义文件存储目录，默认为临时文件夹的.cloud-clipboard-storage目录

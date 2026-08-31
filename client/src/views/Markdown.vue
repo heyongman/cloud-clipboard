@@ -6,8 +6,8 @@
                     <v-card-title class="d-flex flex-wrap align-center">
                         <span class="text-h6">Markdown 编辑</span>
                         <v-spacer></v-spacer>
-                        <v-btn small text color="primary" @click="resetSample">
-                            重置示例
+                        <v-btn small text color="primary" @click="clearMarkdown">
+                            清空
                         </v-btn>
                     </v-card-title>
                     <v-card-text>
@@ -113,31 +113,10 @@ import {
     createExportFileName,
 } from '@/utils/markdown-export.mjs';
 
-const DEFAULT_MARKDOWN = `# Markdown 长图
-
-这是一个用于导出长图的在线编辑页面。
-
-## 功能特点
-
-- 实时预览 Markdown
-- 支持当前设备、移动端、PC 端版式
-- 一键导出整篇 PNG 长图
-
-> 适合写公告、说明、活动海报文案和临时笔记。
-
-\`\`\`js
-function exportAsImage(mode) {
-  return \`ready: \${mode}\`;
-}
-\`\`\`
-
-访问项目主页：[Cloud Clipboard](#/)
-`;
-
 export default {
     data() {
         return {
-            markdownText: DEFAULT_MARKDOWN,
+            markdownText: '',
             renderedHtml: '',
             previewMode: 'current',
             previewModes: [
@@ -249,8 +228,8 @@ export default {
                 this.previewHostWidth = hostWidth > 0 ? hostWidth : 320;
             });
         },
-        resetSample() {
-            this.markdownText = DEFAULT_MARKDOWN;
+        clearMarkdown() {
+            this.markdownText = '';
         },
         async loadHtmlToImage() {
             if (this.htmlToImage) {

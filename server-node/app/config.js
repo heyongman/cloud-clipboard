@@ -23,7 +23,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             prefix: '',
             key: null,
             cert: null,
-            history: 10,
+            history: 100,
             auth: false,
             historyFile: null,
             subscriptionFile: null,
