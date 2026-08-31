@@ -16,9 +16,9 @@ const CHROMIUM_BROWSER_PATTERN = /\b(?:Chrome|Chromium|EdgA?|OPR|Vivaldi)\/\d/i;
  * avoid entering this path in embedded browsers with incomplete shims.
  */
 export const supportsFileSystemAccessDownload = ({
-    windowObject = typeof window === 'undefined' ? undefined : window,
-    navigatorObject = typeof navigator === 'undefined' ? undefined : navigator,
-} = {}) => {
+                                                     windowObject = typeof window === 'undefined' ? undefined : window,
+                                                     navigatorObject = typeof navigator === 'undefined' ? undefined : navigator,
+                                                 } = {}) => {
     if (!windowObject
         || windowObject.isSecureContext === false
         || typeof windowObject.showSaveFilePicker !== 'function'
@@ -28,7 +28,16 @@ export const supportsFileSystemAccessDownload = ({
 
     const userAgentData = navigatorObject?.userAgentData;
     if (userAgentData) {
-        return (userAgentData.brands || []).some(({brand = ''}) => (
+        const brands = userAgentData.brands || [];
+
+        // 1. 如果包含 "Android WebView"，直接返回 false
+        const isAndroidWebView = brands.some(({ brand = '' }) => /Android WebView/i.test(brand));
+        if (isAndroidWebView) {
+            return false;
+        }
+
+        // 2. 否则再判断是否为支持的 Chromium 内核浏览器
+        return brands.some(({ brand = '' }) => (
             /Chromium|Google Chrome|Microsoft Edge|Opera|Brave|Vivaldi/i.test(brand)
         ));
     }
