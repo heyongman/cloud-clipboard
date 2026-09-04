@@ -226,3 +226,44 @@ test('downloadRangesToFile 对客户端错误不进行无意义重试', async ()
     }), /分片下载请求失败/);
     assert.equal(attempts, 1);
 });
+
+test('downloadRangesToFile 在传输速度快时降低并发', async () => {
+    const source = new Uint8Array(4 * 1024 * 1024);
+    const writable = {
+        async write() {},
+        async truncate() {},
+    };
+    const fetchImpl = async (_url, options) => {
+        const [start, end] = options.headers.Range.slice(6).split('-').map(Number);
+        return new Response(source.slice(start, end + 1), {
+            status: 206,
+            headers: {
+                'Content-Range': `bytes ${start}-${end}/${source.length}`,
+                'Content-Length': `${end - start + 1}`,
+            },
+        });
+    };
+
+    let peak = 0;
+    let active = 0;
+    const wrappedFetch = async (...args) => {
+        active++;
+        peak = Math.max(peak, active);
+        try {
+            return await fetchImpl(...args);
+        } finally {
+            active--;
+        }
+    };
+    await downloadRangesToFile({
+        url: '/file',
+        fileSize: source.length,
+        chunkSize: 1024 * 1024,
+        concurrency: 3,
+        maxConcurrency: 3,
+        adaptive: true,
+        writable,
+        fetchImpl: wrappedFetch,
+    });
+    assert.equal(peak, 3);
+});

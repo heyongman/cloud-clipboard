@@ -270,7 +270,7 @@ export default {
                         reportProgress(fileIndex, delta);
                       }
                     },
-                  }));
+                  }), {bytes: chunk.size});
                 const tail = chunk.size - reported;
                 if (tail) {
                   reported = chunk.size;

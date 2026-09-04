@@ -30,7 +30,7 @@ test('chooseUploadParameters 根据网络信息选择固定到单文件的分片
     });
     assert.deepEqual(chooseUploadParameters(100 * MIB, config, {effectiveType: '4g', downlink: 50}), {
         chunkSize: 16 * MIB,
-        initialConcurrency: 3,
+        initialConcurrency: 2,
         maxConcurrency: 6,
     });
     assert.equal(chooseUploadParameters(3 * MIB, config, {}).chunkSize, 3 * MIB);
@@ -88,6 +88,17 @@ test('createAdaptiveUploadPool 遇到可重试错误后将并发减半', async (
     await assert.rejects(pool.run(async () => {
         throw {response: {status: 503}};
     }));
+    assert.equal(pool.concurrency, 2);
+    pool.dispose();
+});
+
+test('createAdaptiveUploadPool 在传输速度慢时提高并发', async () => {
+    const pool = createAdaptiveUploadPool({initialConcurrency: 1, maxConcurrency: 3});
+    const slowTask = () => new Promise(resolve => setTimeout(resolve, 350));
+
+    await pool.run(slowTask, {bytes: 1024 * 1024});
+    assert.equal(pool.concurrency, 1);
+    await pool.run(slowTask, {bytes: 1024 * 1024});
     assert.equal(pool.concurrency, 2);
     pool.dispose();
 });

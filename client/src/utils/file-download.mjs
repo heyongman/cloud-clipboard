@@ -8,6 +8,15 @@ export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     adaptive: true,
 });
 
+const MIB = 1024 * 1024;
+const SLOW_TRANSFER_RATE = 4 * MIB;
+const FAST_TRANSFER_RATE = 16 * MIB;
+const SPEED_SAMPLES_TO_INCREASE = 2;
+const SPEED_SAMPLES_TO_DECREASE = 3;
+const now = () => typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+
 const CHROMIUM_BROWSER_PATTERN = /\b(?:Chrome|Chromium|EdgA?|OPR|Vivaldi)\/\d/i;
 
 /**
@@ -102,7 +111,6 @@ export const chooseDownloadParameters = (
         concurrency = Math.min(concurrency, 2);
     } else if (Number.isFinite(downlink) && downlink >= 30) {
         chunk = 16 * 1024 * 1024;
-        concurrency = Math.max(concurrency, 3);
     }
     return {
         ...config,
@@ -261,9 +269,11 @@ const downloadOneRange = async ({
     signal,
     retries,
     onRetry,
+    onComplete,
 }) => {
     let previousBytes = 0;
     for (let attempt = 0; attempt <= retries; attempt++) {
+        const startedAt = now();
         if (signal?.aborted) throw new DOMException('下载已取消', 'AbortError');
         if (previousBytes) {
             onProgress(-previousBytes, rangeIndex);
@@ -287,6 +297,7 @@ const downloadOneRange = async ({
                     onProgress(bytes, rangeIndex);
                 },
             );
+            onComplete(range.length, Math.max(1, now() - startedAt));
             return;
         } catch (error) {
             if (error?.name === 'AbortError' || signal?.aborted) throw error;
@@ -341,7 +352,8 @@ export const downloadRangesToFile = async ({
     try {
         let active = 0;
         let limit = Math.min(maxConcurrency, concurrency);
-        let successes = 0;
+        let slowSamples = 0;
+        let fastSamples = 0;
         await new Promise((resolve, reject) => {
             let settled = false;
             const launch = () => {
@@ -367,15 +379,33 @@ export const downloadRangesToFile = async ({
                         onRetry: () => {
                             if (!adaptive) return;
                             limit = Math.max(1, Math.ceil(limit / 2));
-                            successes = 0;
+                            slowSamples = 0;
+                            fastSamples = 0;
+                        },
+                        onComplete: (bytes, elapsed) => {
+                            if (!adaptive) return;
+                            const speed = bytes / (elapsed / 1000);
+                            if (speed < SLOW_TRANSFER_RATE) {
+                                slowSamples++;
+                                fastSamples = 0;
+                                if (slowSamples >= SPEED_SAMPLES_TO_INCREASE && limit < maxConcurrency) {
+                                    limit++;
+                                    slowSamples = 0;
+                                }
+                            } else if (speed > FAST_TRANSFER_RATE) {
+                                fastSamples++;
+                                slowSamples = 0;
+                                if (fastSamples >= SPEED_SAMPLES_TO_DECREASE && limit > 1) {
+                                    limit--;
+                                    fastSamples = 0;
+                                }
+                            } else {
+                                slowSamples = 0;
+                                fastSamples = 0;
+                            }
                         },
                     }).then(() => {
                         active--;
-                        successes++;
-                        if (adaptive && limit < maxConcurrency && successes >= limit * 2) {
-                            limit++;
-                            successes = 0;
-                        }
                         launch();
                     }, error => {
                         active--;

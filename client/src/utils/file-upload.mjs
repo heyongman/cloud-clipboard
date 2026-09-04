@@ -59,7 +59,6 @@ export const chooseUploadParameters = (
         initialConcurrency = Math.min(initialConcurrency, 2);
     } else if (Number.isFinite(downlink) && downlink >= 30) {
         targetChunk = 16 * MIB;
-        initialConcurrency = Math.max(initialConcurrency, 3);
     }
 
     return {
@@ -102,9 +101,8 @@ export const waitForRetry = (milliseconds, signal) => new Promise((resolve, reje
 });
 
 /**
- * One adaptive pool is shared by every file in a batch. It uses additive
- * increase after sustained success and multiplicative decrease after a
- * retryable failure, keeping aggregate request concurrency bounded.
+ * One pool is shared by every file in a batch. Adaptive uploads start with
+ * one request and set a fixed limit after the speed probe completes.
  */
 export const createAdaptiveUploadPool = ({
     initialConcurrency,
@@ -114,7 +112,6 @@ export const createAdaptiveUploadPool = ({
 }) => {
     let limit = Math.max(1, Math.min(maxConcurrency, initialConcurrency));
     let active = 0;
-    let successCount = 0;
     const queue = [];
 
     const rejectQueued = reason => {
@@ -131,17 +128,8 @@ export const createAdaptiveUploadPool = ({
             Promise.resolve()
                 .then(entry.task)
                 .then(result => {
-                    if (entry.adjust) successCount++;
-                    if (adaptive && entry.adjust && limit < maxConcurrency && successCount >= limit * 2) {
-                        limit++;
-                        successCount = 0;
-                    }
                     entry.resolve(result);
                 }, error => {
-                    if (adaptive && entry.adjust && isRetryableUploadError(error)) {
-                        limit = Math.max(1, Math.ceil(limit / 2));
-                        successCount = 0;
-                    }
                     entry.reject(error);
                 })
                 .finally(() => {
@@ -157,11 +145,16 @@ export const createAdaptiveUploadPool = ({
     signal?.addEventListener('abort', abortQueued, {once: true});
 
     return {
-        run(task, {adjust = true} = {}) {
+        run(task) {
             return new Promise((resolve, reject) => {
-                queue.push({task, resolve, reject, adjust});
+                queue.push({task, resolve, reject});
                 drain();
             });
+        },
+        setConcurrency(value) {
+            if (!adaptive || !Number.isSafeInteger(value) || value <= 0) return;
+            limit = Math.min(maxConcurrency, value);
+            drain();
         },
         get concurrency() {
             return limit;
