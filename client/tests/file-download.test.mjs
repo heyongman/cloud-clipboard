@@ -6,6 +6,7 @@ import {
     createDownloadRanges,
     downloadRangesToFile,
     parseContentRange,
+    selectDownloadConcurrency,
     supportsFileSystemAccessDownload,
 } from '../src/utils/file-download.mjs';
 
@@ -120,6 +121,20 @@ test('createDownloadRanges 覆盖所有字节且最后一片可变长', () => {
         {start: 10, end: 19, length: 10},
         {start: 20, end: 24, length: 5},
     ]);
+    assert.deepEqual(createDownloadRanges(25, 10, 7), [
+        {start: 7, end: 16, length: 10},
+        {start: 17, end: 24, length: 8},
+    ]);
+});
+
+test('selectDownloadConcurrency 对单连接慢速下载提高固定并发', () => {
+    assert.equal(selectDownloadConcurrency(20 * MIB), 2);
+    assert.equal(selectDownloadConcurrency(16 * MIB), 2);
+    assert.equal(selectDownloadConcurrency(8 * MIB), 4);
+    assert.equal(selectDownloadConcurrency(4 * MIB), 6);
+    assert.equal(selectDownloadConcurrency(4 * MIB - 1), 8);
+    assert.equal(selectDownloadConcurrency(1 * MIB, {maxConcurrency: 6}), 6);
+    assert.equal(selectDownloadConcurrency(1 * MIB, {minConcurrency: 6, maxConcurrency: 4}), 4);
 });
 
 test('parseContentRange 只接受合法的单范围', () => {
@@ -167,7 +182,7 @@ test('downloadRangesToFile 并行请求后按绝对偏移写回文件', async ()
         fetchImpl,
     });
 
-    assert.deepEqual([...target], [...source]);
+    assert.deepEqual(target, source);
     assert.deepEqual(requests.sort((a, b) => a[0] - b[0]), [[0, 9], [10, 19], [20, 24]]);
 });
 
@@ -227,14 +242,22 @@ test('downloadRangesToFile 对客户端错误不进行无意义重试', async ()
     assert.equal(attempts, 1);
 });
 
-test('downloadRangesToFile 在传输速度快时降低并发', async () => {
-    const source = new Uint8Array(4 * 1024 * 1024);
+test('downloadRangesToFile 复用首个 1 MiB 测速数据且不重复请求', async () => {
+    const source = Uint8Array.from({length: 3 * MIB + 17}, (_, index) => index % 251);
+    const target = new Uint8Array(source.length);
+    const requests = [];
+    let progress = 0;
     const writable = {
-        async write() {},
-        async truncate() {},
+        async write({position, data}) {
+            target.set(data, position);
+        },
+        async truncate(size) {
+            assert.equal(size, source.length);
+        },
     };
     const fetchImpl = async (_url, options) => {
         const [start, end] = options.headers.Range.slice(6).split('-').map(Number);
+        requests.push([start, end]);
         return new Response(source.slice(start, end + 1), {
             status: 206,
             headers: {
@@ -244,26 +267,24 @@ test('downloadRangesToFile 在传输速度快时降低并发', async () => {
         });
     };
 
-    let peak = 0;
-    let active = 0;
-    const wrappedFetch = async (...args) => {
-        active++;
-        peak = Math.max(peak, active);
-        try {
-            return await fetchImpl(...args);
-        } finally {
-            active--;
-        }
-    };
     await downloadRangesToFile({
         url: '/file',
         fileSize: source.length,
-        chunkSize: 1024 * 1024,
-        concurrency: 3,
-        maxConcurrency: 3,
+        chunkSize: MIB,
+        concurrency: 2,
+        maxConcurrency: 8,
         adaptive: true,
         writable,
-        fetchImpl: wrappedFetch,
+        fetchImpl,
+        onProgress: bytes => { progress += bytes; },
     });
-    assert.equal(peak, 3);
+
+    assert.deepEqual([...target], [...source]);
+    assert.equal(progress, source.length);
+    assert.deepEqual(requests.sort((a, b) => a[0] - b[0]), [
+        [0, MIB - 1],
+        [MIB, 2 * MIB - 1],
+        [2 * MIB, 3 * MIB - 1],
+        [3 * MIB, source.length - 1],
+    ]);
 });

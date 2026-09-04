@@ -85,7 +85,7 @@ import {
 } from '@mdi/js';
 import {
     chooseUploadParameters,
-    createAdaptiveUploadPool,
+    createUploadPool,
     isAbortError,
     isRetryableUploadError,
     normalizeUploadConfig,
@@ -146,10 +146,8 @@ export default {
           uploadConfig,
         );
         const controller = new AbortController();
-        const pool = createAdaptiveUploadPool({
-          initialConcurrency: batchParameters.initialConcurrency,
-          maxConcurrency: batchParameters.maxConcurrency,
-          adaptive: uploadConfig.adaptive,
+        const pool = createUploadPool({
+          concurrency: batchParameters.concurrency,
           signal: controller.signal,
         });
         this.uploadController = controller;
@@ -242,12 +240,12 @@ export default {
             filename: file.name,
             size: file.size,
             chunkSize: parameters.chunkSize,
-        }, {signal}), {adjust: false});
+        }, {signal}));
         const { uuid, chunkSize = parameters.chunkSize } = response.data.result;
         let finished = false;
         try {
           // 2. 每个文件只创建少量 worker，分片在执行时才 slice，避免大文件
-          // 提前创建数千个任务；所有文件共同使用同一个自适应并发池。
+          // 提前创建数千个任务；所有文件共同使用同一个固定并发池。
           const chunksCount = Math.ceil(file.size / chunkSize);
           let nextChunkIndex = 0;
           const uploadChunk = async i => {
@@ -270,7 +268,7 @@ export default {
                         reportProgress(fileIndex, delta);
                       }
                     },
-                  }), {bytes: chunk.size});
+                  }));
                 const tail = chunk.size - reported;
                 if (tail) {
                   reported = chunk.size;
@@ -299,7 +297,7 @@ export default {
               await uploadChunk(chunkIndex);
             }
           };
-          await Promise.all(Array(Math.min(parameters.maxConcurrency, chunksCount))
+          await Promise.all(Array(Math.min(parameters.concurrency, chunksCount))
             .fill(null)
             .map(worker));
 
@@ -307,7 +305,7 @@ export default {
           await pool.run(() => this.$http.post(`upload/finish/${uuid}`, null, {
               params: new URLSearchParams([['room', this.$root.room]]),
               signal,
-            }), {adjust: false});
+            }));
           finished = true;
         } finally {
           if (!finished) {

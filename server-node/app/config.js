@@ -49,7 +49,6 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
             minChunk: 2097152,
             maxChunk: 16777216,
             concurrency: 2,
-            maxConcurrency: 6,
             adaptive: true,
             limit: 268435456,
             download: DEFAULT_DOWNLOAD_CONFIG,
@@ -93,7 +92,6 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      minChunk: Number,
  *      maxChunk: Number,
  *      concurrency: Number,
- *      maxConcurrency: Number,
  *      adaptive: Boolean,
  *      limit: Number,
  *      download: {
@@ -143,6 +141,7 @@ config.file = {
     ...normalizeUploadConfig(config.file),
     download: normalizeDownloadConfig(config.file?.download),
 };
+delete config.file.maxConcurrency;
 if (config.file && config.file.expire !== undefined) {
     delete config.file.expire;
 }

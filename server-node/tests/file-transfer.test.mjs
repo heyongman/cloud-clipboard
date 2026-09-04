@@ -66,12 +66,11 @@ test('normalizeDownloadConfig 为缺失或非法配置提供安全默认值', ()
     });
 });
 
-test('normalizeUploadConfig 补齐上传参数并限制自适应并发', () => {
+test('normalizeUploadConfig 补齐上传参数并限制固定并发', () => {
     assert.deepEqual(normalizeUploadConfig({chunk: 4 * 1024 * 1024, concurrency: 100}), {
         ...DEFAULT_UPLOAD_CONFIG,
         chunk: 4 * 1024 * 1024,
         concurrency: 8,
-        maxConcurrency: 8,
     });
     assert.equal(normalizeUploadConfig({limit: -1}).limit, DEFAULT_UPLOAD_CONFIG.limit);
 });

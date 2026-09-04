@@ -4,15 +4,15 @@ export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     minChunk: 4 * 1024 * 1024,
     maxChunk: 16 * 1024 * 1024,
     concurrency: 2,
-    maxConcurrency: 6,
+    maxConcurrency: 8,
     adaptive: true,
 });
 
 const MIB = 1024 * 1024;
-const SLOW_TRANSFER_RATE = 4 * MIB;
-const FAST_TRANSFER_RATE = 16 * MIB;
-const SPEED_SAMPLES_TO_INCREASE = 2;
-const SPEED_SAMPLES_TO_DECREASE = 3;
+const SPEED_PROBE_SIZE = MIB;
+const MEDIUM_TRANSFER_RATE = 4 * MIB;
+const FAST_TRANSFER_RATE = 8 * MIB;
+const VERY_FAST_TRANSFER_RATE = 16 * MIB;
 const now = () => typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
     : Date.now();
@@ -119,7 +119,28 @@ export const chooseDownloadParameters = (
     };
 };
 
-export const createDownloadRanges = (fileSize, chunkSize) => {
+/**
+ * Slow single-connection transfers benefit from more parallel Range requests,
+ * while fast LAN transfers avoid unnecessary request and write contention.
+ */
+export const selectDownloadConcurrency = (
+    bytesPerSecond,
+    {minConcurrency = 2, maxConcurrency = 8} = {},
+) => {
+    const maximum = Number.isSafeInteger(maxConcurrency) && maxConcurrency > 0
+        ? Math.min(8, maxConcurrency)
+        : 8;
+    const minimum = Number.isSafeInteger(minConcurrency) && minConcurrency > 0
+        ? Math.min(maximum, minConcurrency)
+        : Math.min(2, maximum);
+    let target = 8;
+    if (bytesPerSecond >= VERY_FAST_TRANSFER_RATE) target = 2;
+    else if (bytesPerSecond >= FAST_TRANSFER_RATE) target = 4;
+    else if (bytesPerSecond >= MEDIUM_TRANSFER_RATE) target = 6;
+    return Math.max(minimum, Math.min(maximum, target));
+};
+
+export const createDownloadRanges = (fileSize, chunkSize, startOffset = 0) => {
     if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
         throw new RangeDownloadError('文件大小无效');
     }
@@ -127,8 +148,11 @@ export const createDownloadRanges = (fileSize, chunkSize) => {
         throw new RangeDownloadError('下载分片大小无效');
     }
 
+    if (!Number.isSafeInteger(startOffset) || startOffset < 0 || startOffset > fileSize) {
+        throw new RangeDownloadError('下载起始位置无效');
+    }
     const ranges = [];
-    for (let start = 0; start < fileSize; start += chunkSize) {
+    for (let start = startOffset; start < fileSize; start += chunkSize) {
         const end = Math.min(fileSize - 1, start + chunkSize - 1);
         ranges.push({start, end, length: end - start + 1});
     }
@@ -229,6 +253,37 @@ const readResponse = async (response, range, write, onBytes) => {
     }
 };
 
+const readResponseToBuffer = async (response, range) => {
+    if (!response.body || typeof response.body.getReader !== 'function') {
+        const data = new Uint8Array(await response.arrayBuffer());
+        if (data.byteLength !== range.length) {
+            throw new RangeDownloadError('下载测速分片长度不匹配', {fallback: true});
+        }
+        return data;
+    }
+
+    const reader = response.body.getReader();
+    const data = new Uint8Array(range.length);
+    let position = 0;
+    try {
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            if (!value || !value.byteLength || position + value.byteLength > data.byteLength) {
+                throw new RangeDownloadError('下载测速分片长度超出预期');
+            }
+            data.set(value, position);
+            position += value.byteLength;
+        }
+    } finally {
+        reader.releaseLock?.();
+    }
+    if (position !== data.byteLength) {
+        throw new RangeDownloadError('下载测速分片长度不完整');
+    }
+    return data;
+};
+
 const createWriteQueue = writable => {
     let tail = Promise.resolve();
     return (data, position) => {
@@ -268,12 +323,9 @@ const downloadOneRange = async ({
     onProgress,
     signal,
     retries,
-    onRetry,
-    onComplete,
 }) => {
     let previousBytes = 0;
     for (let attempt = 0; attempt <= retries; attempt++) {
-        const startedAt = now();
         if (signal?.aborted) throw new DOMException('下载已取消', 'AbortError');
         if (previousBytes) {
             onProgress(-previousBytes, rangeIndex);
@@ -297,7 +349,6 @@ const downloadOneRange = async ({
                     onProgress(bytes, rangeIndex);
                 },
             );
-            onComplete(range.length, Math.max(1, now() - startedAt));
             return;
         } catch (error) {
             if (error?.name === 'AbortError' || signal?.aborted) throw error;
@@ -306,10 +357,45 @@ const downloadOneRange = async ({
             if (attempt === retries) {
                 throw error;
             }
-            onRetry(error, attempt);
             await sleep(250 * 2 ** attempt, signal);
         }
     }
+};
+
+const downloadSpeedProbe = async ({
+    url,
+    range,
+    fileSize,
+    fetchImpl,
+    write,
+    onProgress,
+    signal,
+    retries,
+}) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        if (signal?.aborted) throw new DOMException('下载已取消', 'AbortError');
+        const startedAt = now();
+        try {
+            const response = await fetchImpl(url, {
+                method: 'GET',
+                headers: {Range: `bytes=${range.start}-${range.end}`},
+                credentials: 'same-origin',
+                cache: 'no-store',
+                signal,
+            });
+            validateRangeResponse(response, range, fileSize);
+            const data = await readResponseToBuffer(response, range);
+            const networkElapsed = Math.max(1, now() - startedAt);
+            await write(data, range.start);
+            onProgress(data.byteLength, data.byteLength, range);
+            return data.byteLength / (networkElapsed / 1000);
+        } catch (error) {
+            if (error?.name === 'AbortError' || signal?.aborted) throw error;
+            if (error?.fallback || error?.retryable === false || attempt === retries) throw error;
+            await sleep(250 * 2 ** attempt, signal);
+        }
+    }
+    return 0;
 };
 
 /**
@@ -335,25 +421,46 @@ export const downloadRangesToFile = async ({
     if (!Number.isSafeInteger(concurrency) || concurrency <= 0) {
         throw new RangeDownloadError('下载并发数无效');
     }
-    const ranges = createDownloadRanges(fileSize, chunkSize);
     const write = createWriteQueue(writable);
     const controller = new AbortController();
     const combinedSignal = controller.signal;
     const abortController = () => controller.abort(signal?.reason);
     signal?.addEventListener('abort', abortController, {once: true});
     if (signal?.aborted) controller.abort(signal.reason);
-    const progress = Array(ranges.length).fill(0);
-    let nextIndex = 0;
-
-    const updateProgress = (bytes, rangeIndex) => {
-        progress[rangeIndex] += bytes;
-        onProgress(bytes, progress[rangeIndex], ranges[rangeIndex]);
-    };
     try {
+        let fixedConcurrency = Math.min(maxConcurrency, concurrency);
+        let startOffset = 0;
+        if (adaptive) {
+            const probeRange = {
+                start: 0,
+                end: Math.min(fileSize, SPEED_PROBE_SIZE) - 1,
+                length: Math.min(fileSize, SPEED_PROBE_SIZE),
+            };
+            const speed = await downloadSpeedProbe({
+                url,
+                range: probeRange,
+                fileSize,
+                fetchImpl,
+                write,
+                onProgress,
+                signal: combinedSignal,
+                retries,
+            });
+            fixedConcurrency = selectDownloadConcurrency(speed, {
+                minConcurrency: concurrency,
+                maxConcurrency,
+            });
+            startOffset = probeRange.length;
+        }
+
+        const ranges = createDownloadRanges(fileSize, chunkSize, startOffset);
+        const progress = Array(ranges.length).fill(0);
+        let nextIndex = 0;
+        const updateProgress = (bytes, rangeIndex) => {
+            progress[rangeIndex] += bytes;
+            onProgress(bytes, progress[rangeIndex], ranges[rangeIndex]);
+        };
         let active = 0;
-        let limit = Math.min(maxConcurrency, concurrency);
-        let slowSamples = 0;
-        let fastSamples = 0;
         await new Promise((resolve, reject) => {
             let settled = false;
             const launch = () => {
@@ -363,7 +470,7 @@ export const downloadRangesToFile = async ({
                     resolve();
                     return;
                 }
-                while (active < limit && nextIndex < ranges.length) {
+                while (active < fixedConcurrency && nextIndex < ranges.length) {
                     const rangeIndex = nextIndex++;
                     active++;
                     downloadOneRange({
@@ -376,34 +483,6 @@ export const downloadRangesToFile = async ({
                         onProgress: updateProgress,
                         signal: combinedSignal,
                         retries,
-                        onRetry: () => {
-                            if (!adaptive) return;
-                            limit = Math.max(1, Math.ceil(limit / 2));
-                            slowSamples = 0;
-                            fastSamples = 0;
-                        },
-                        onComplete: (bytes, elapsed) => {
-                            if (!adaptive) return;
-                            const speed = bytes / (elapsed / 1000);
-                            if (speed < SLOW_TRANSFER_RATE) {
-                                slowSamples++;
-                                fastSamples = 0;
-                                if (slowSamples >= SPEED_SAMPLES_TO_INCREASE && limit < maxConcurrency) {
-                                    limit++;
-                                    slowSamples = 0;
-                                }
-                            } else if (speed > FAST_TRANSFER_RATE) {
-                                fastSamples++;
-                                slowSamples = 0;
-                                if (fastSamples >= SPEED_SAMPLES_TO_DECREASE && limit > 1) {
-                                    limit--;
-                                    fastSamples = 0;
-                                }
-                            } else {
-                                slowSamples = 0;
-                                fastSamples = 0;
-                            }
-                        },
                     }).then(() => {
                         active--;
                         launch();
