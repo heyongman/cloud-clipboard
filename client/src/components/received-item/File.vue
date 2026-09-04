@@ -264,6 +264,8 @@ export default {
                         chunkSize: downloadConfig.chunk,
                         concurrency: downloadConfig.concurrency,
                         maxConcurrency: downloadConfig.maxConcurrency,
+                        minChunk: downloadConfig.minChunk,
+                        maxChunk: downloadConfig.maxChunk,
                         adaptive: downloadConfig.adaptive,
                         writable,
                         onProgress: bytes => {

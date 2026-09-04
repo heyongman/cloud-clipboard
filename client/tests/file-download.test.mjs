@@ -6,6 +6,7 @@ import {
     createDownloadRanges,
     downloadRangesToFile,
     parseContentRange,
+    selectDownloadChunkSize,
     selectDownloadConcurrency,
     supportsFileSystemAccessDownload,
 } from '../src/utils/file-download.mjs';
@@ -135,6 +136,15 @@ test('selectDownloadConcurrency 对单连接慢速下载提高固定并发', () 
     assert.equal(selectDownloadConcurrency(4 * MIB - 1), 8);
     assert.equal(selectDownloadConcurrency(1 * MIB, {maxConcurrency: 6}), 6);
     assert.equal(selectDownloadConcurrency(1 * MIB, {minConcurrency: 6, maxConcurrency: 4}), 4);
+});
+
+test('selectDownloadChunkSize 按约一秒传输量选择并限制分片大小', () => {
+    assert.equal(selectDownloadChunkSize(2 * MIB), 4 * MIB);
+    assert.equal(selectDownloadChunkSize(4.4 * MIB), 4 * MIB);
+    assert.equal(selectDownloadChunkSize(4.6 * MIB), 5 * MIB);
+    assert.equal(selectDownloadChunkSize(10 * MIB), 10 * MIB);
+    assert.equal(selectDownloadChunkSize(40 * MIB), 16 * MIB);
+    assert.equal(selectDownloadChunkSize(10 * MIB, {minChunk: 6 * MIB, maxChunk: 8 * MIB}), 8 * MIB);
 });
 
 test('parseContentRange 只接受合法的单范围', () => {

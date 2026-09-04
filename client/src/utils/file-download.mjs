@@ -140,6 +140,28 @@ export const selectDownloadConcurrency = (
     return Math.max(minimum, Math.min(maximum, target));
 };
 
+/**
+ * Keep each Range close to one second of single-connection transfer time.
+ * MiB alignment avoids overly fragmented byte ranges and configuration bounds
+ * cap both request overhead and per-request buffering.
+ */
+export const selectDownloadChunkSize = (
+    bytesPerSecond,
+    {minChunk = 4 * MIB, maxChunk = 16 * MIB} = {},
+) => {
+    const minimum = Number.isSafeInteger(minChunk) && minChunk > 0
+        ? minChunk
+        : 4 * MIB;
+    const maximum = Number.isSafeInteger(maxChunk) && maxChunk >= minimum
+        ? maxChunk
+        : Math.max(minimum, 16 * MIB);
+    const measured = Number.isFinite(bytesPerSecond) && bytesPerSecond > 0
+        ? bytesPerSecond
+        : minimum;
+    const aligned = Math.max(MIB, Math.round(measured / MIB) * MIB);
+    return Math.max(minimum, Math.min(maximum, aligned));
+};
+
 export const createDownloadRanges = (fileSize, chunkSize, startOffset = 0) => {
     if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
         throw new RangeDownloadError('文件大小无效');
@@ -414,6 +436,8 @@ export const downloadRangesToFile = async ({
     signal,
     adaptive = false,
     maxConcurrency = concurrency,
+    minChunk = chunkSize,
+    maxChunk = chunkSize,
 }) => {
     if (typeof fetchImpl !== 'function') {
         throw new RangeDownloadError('当前浏览器不支持 Fetch');
@@ -429,6 +453,7 @@ export const downloadRangesToFile = async ({
     if (signal?.aborted) controller.abort(signal.reason);
     try {
         let fixedConcurrency = Math.min(maxConcurrency, concurrency);
+        let fixedChunkSize = chunkSize;
         let startOffset = 0;
         if (adaptive) {
             const probeRange = {
@@ -450,10 +475,11 @@ export const downloadRangesToFile = async ({
                 minConcurrency: concurrency,
                 maxConcurrency,
             });
+            fixedChunkSize = selectDownloadChunkSize(speed, {minChunk, maxChunk});
             startOffset = probeRange.length;
         }
 
-        const ranges = createDownloadRanges(fileSize, chunkSize, startOffset);
+        const ranges = createDownloadRanges(fileSize, fixedChunkSize, startOffset);
         const progress = Array(ranges.length).fill(0);
         let nextIndex = 0;
         const updateProgress = (bytes, rangeIndex) => {
