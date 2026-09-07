@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
     chooseDownloadParameters,
     createDownloadRanges,
+    createMemoryWritable,
     DEFAULT_DOWNLOAD_CONFIG,
     downloadRangesToFile,
     normalizeDownloadConfig,
@@ -310,4 +311,47 @@ test('downloadRangesToFile 复用首个 1 MiB 测速数据且不重复请求', a
         [2 * MIB, 3 * MIB - 1],
         [3 * MIB, source.length - 1],
     ]);
+});
+
+test('createMemoryWritable 乱序按偏移写入并保持缓冲完整', async () => {
+    const writable = createMemoryWritable(25);
+    await writable.write({position: 10, data: Uint8Array.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])});
+    await writable.write({position: 0, data: Uint8Array.from({length: 10}, (_, index) => index)});
+    await writable.write({position: 20, data: Uint8Array.from([20, 21, 22, 23, 24])});
+    await writable.truncate(25);
+    assert.deepEqual(
+        [...writable.buffer],
+        [...Uint8Array.from({length: 25}, (_, index) => index)],
+    );
+});
+
+test('createMemoryWritable 拒绝非法文件大小', () => {
+    assert.throws(() => createMemoryWritable(-1), /文件大小无效/);
+    assert.throws(() => createMemoryWritable(1.5), /文件大小无效/);
+});
+
+test('downloadRangesToFile 配合 createMemoryWritable 在内存中完成并行下载', async () => {
+    const source = Uint8Array.from({length: 25}, (_, index) => index);
+    const writable = createMemoryWritable(source.length);
+    const fetchImpl = async (_url, options) => {
+        const [start, end] = options.headers.Range.slice(6).split('-').map(Number);
+        return new Response(source.slice(start, end + 1), {
+            status: 206,
+            headers: {
+                'Content-Range': `bytes ${start}-${end}/${source.length}`,
+                'Content-Length': `${end - start + 1}`,
+            },
+        });
+    };
+
+    await downloadRangesToFile({
+        url: '/file',
+        fileSize: source.length,
+        chunkSize: 10,
+        concurrency: 3,
+        writable,
+        fetchImpl,
+    });
+
+    assert.deepEqual([...writable.buffer], [...source]);
 });

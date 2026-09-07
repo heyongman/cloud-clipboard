@@ -321,6 +321,26 @@ const createWriteQueue = writable => {
     };
 };
 
+/**
+ * In-memory writable implementing the subset of the
+ * FileSystemWritableFileStream interface that downloadRangesToFile relies on,
+ * so parallel Range downloads can target a pre-allocated buffer on browsers
+ * without File System Access support.
+ */
+export const createMemoryWritable = fileSize => {
+    if (!Number.isSafeInteger(fileSize) || fileSize <= 0) {
+        throw new RangeDownloadError('文件大小无效');
+    }
+    const buffer = new Uint8Array(fileSize);
+    return {
+        buffer,
+        async write({position, data}) {
+            buffer.set(data, position);
+        },
+        async truncate() {},
+    };
+};
+
 const sleep = (milliseconds, signal) => new Promise((resolve, reject) => {
     if (signal?.aborted) {
         reject(signal.reason || new DOMException('下载已取消', 'AbortError'));
