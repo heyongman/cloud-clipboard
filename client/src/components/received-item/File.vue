@@ -135,6 +135,7 @@ import { copyToClipboard } from '@/util.js';
 import {
     DEFAULT_DOWNLOAD_CONFIG,
     chooseDownloadParameters,
+    createMemoryWritable,
     downloadRangesToFile,
     supportsFileSystemAccessDownload,
 } from '@/utils/file-download.mjs';
@@ -279,6 +280,38 @@ export default {
                     });
                     await writable.close();
                     writable = null;
+                    this.$toast('文件下载完成');
+                } else if (this.meta.size >= downloadConfig.threshold
+                    && this.meta.size <= downloadConfig.memoryThreshold) {
+                    // 非 FSA 浏览器（或用户取消保存对话框）且大小适中时，
+                    // 并行 Range 请求下载到内存再触发保存，获得与流式下载一致的进度与速度。
+                    streamingAttempted = true;
+                    const memoryWritable = createMemoryWritable(this.meta.size);
+                    await downloadRangesToFile({
+                        url,
+                        fileSize: this.meta.size,
+                        chunkSize: downloadConfig.chunk,
+                        concurrency: downloadConfig.concurrency,
+                        maxConcurrency: downloadConfig.maxConcurrency,
+                        minChunk: downloadConfig.minChunk,
+                        maxChunk: downloadConfig.maxChunk,
+                        adaptive: downloadConfig.adaptive,
+                        writable: memoryWritable,
+                        onProgress: bytes => {
+                            if (bytes > 0) scheduleProgress(bytes);
+                            else if (bytes < 0) {
+                                // 重试时回滚已上报的进度，立即 flush 避免显示倒退滞后
+                                pendingDelta += bytes;
+                                flushProgress();
+                            }
+                        },
+                    });
+                    const objectUrl = URL.createObjectURL(new Blob([memoryWritable.buffer]));
+                    try {
+                        this.triggerNativeDownload(objectUrl);
+                    } finally {
+                        URL.revokeObjectURL(objectUrl);
+                    }
                     this.$toast('文件下载完成');
                 } else {
                     this.triggerNativeDownload(url);
