@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
     chooseDownloadParameters,
     createDownloadRanges,
+    DEFAULT_DOWNLOAD_CONFIG,
     downloadRangesToFile,
+    normalizeDownloadConfig,
     parseContentRange,
     selectDownloadChunkSize,
     selectDownloadConcurrency,
@@ -103,6 +105,7 @@ test('chooseDownloadParameters 根据网络信息选择任务级参数', () => {
     const config = {chunk: 8 * MIB, concurrency: 2, maxConcurrency: 6};
     assert.deepEqual(chooseDownloadParameters(100 * MIB, config, {effectiveType: '3g'}), {
         threshold: 32 * MIB,
+        memoryThreshold: 100 * MIB,
         chunk: 4 * MIB,
         minChunk: 4 * MIB,
         maxChunk: 16 * MIB,
@@ -113,6 +116,16 @@ test('chooseDownloadParameters 根据网络信息选择任务级参数', () => {
     assert.equal(
         chooseDownloadParameters(100 * MIB, config, {effectiveType: '4g', downlink: 50}).chunk,
         16 * MIB,
+    );
+});
+
+test('normalizeDownloadConfig 归一化 memoryThreshold 并对非法值回退默认', () => {
+    assert.equal(normalizeDownloadConfig({memoryThreshold: 64 * MIB}).memoryThreshold, 64 * MIB);
+    assert.equal(normalizeDownloadConfig({memoryThreshold: -1}).memoryThreshold, 100 * MIB);
+    assert.equal(normalizeDownloadConfig({memoryThreshold: 1.5}).memoryThreshold, 100 * MIB);
+    assert.equal(
+        normalizeDownloadConfig().memoryThreshold,
+        DEFAULT_DOWNLOAD_CONFIG.memoryThreshold,
     );
 });
 
