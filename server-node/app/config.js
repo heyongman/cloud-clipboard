@@ -96,6 +96,7 @@ if (!process.argv[2] && !fs.existsSync(defaultConfigPath)) {
  *      limit: Number,
  *      download: {
  *          threshold: Number,
+ *          memoryThreshold: Number,
  *          chunk: Number,
  *          minChunk: Number,
  *          maxChunk: Number,

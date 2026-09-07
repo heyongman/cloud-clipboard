@@ -66,6 +66,19 @@ test('normalizeDownloadConfig 为缺失或非法配置提供安全默认值', ()
     });
 });
 
+test('normalizeDownloadConfig 归一化 memoryThreshold 并对非法值回退默认', () => {
+    assert.equal(
+        normalizeDownloadConfig({memoryThreshold: 64 * 1024 * 1024}).memoryThreshold,
+        64 * 1024 * 1024,
+    );
+    assert.equal(normalizeDownloadConfig({memoryThreshold: -1}).memoryThreshold, 100 * 1024 * 1024);
+    assert.equal(normalizeDownloadConfig({memoryThreshold: 1.5}).memoryThreshold, 100 * 1024 * 1024);
+    assert.equal(
+        normalizeDownloadConfig().memoryThreshold,
+        DEFAULT_DOWNLOAD_CONFIG.memoryThreshold,
+    );
+});
+
 test('normalizeUploadConfig 补齐上传参数并限制固定并发', () => {
     assert.deepEqual(normalizeUploadConfig({chunk: 4 * 1024 * 1024, concurrency: 100}), {
         ...DEFAULT_UPLOAD_CONFIG,

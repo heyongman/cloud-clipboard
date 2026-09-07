@@ -91,6 +91,7 @@ export const buildAccelRedirect = (internalPath, uuid) => (
 
 export const DEFAULT_DOWNLOAD_CONFIG = Object.freeze({
     threshold: 32 * 1024 * 1024,
+    memoryThreshold: 100 * 1024 * 1024,
     chunk: 8 * 1024 * 1024,
     minChunk: 4 * 1024 * 1024,
     maxChunk: 16 * 1024 * 1024,
@@ -119,6 +120,7 @@ export const normalizeDownloadConfig = value => {
     const concurrency = Math.min(8, positiveInteger(raw.concurrency, DEFAULT_DOWNLOAD_CONFIG.concurrency));
     return {
         threshold: positiveInteger(raw.threshold, DEFAULT_DOWNLOAD_CONFIG.threshold),
+        memoryThreshold: positiveInteger(raw.memoryThreshold, DEFAULT_DOWNLOAD_CONFIG.memoryThreshold),
         chunk: Math.min(maxChunk, Math.max(minChunk, positiveInteger(raw.chunk, DEFAULT_DOWNLOAD_CONFIG.chunk))),
         minChunk,
         maxChunk,
